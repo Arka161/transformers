@@ -328,19 +328,24 @@ class T5LayerFF(nn.Module):
             raise ValueError(
                 f"{self.config.feed_forward_proj} is not supported. Choose between `relu` and `gated-gelu`"
             )
-        # self.capacity_factor = capacity_factor
-        # self.is_scale_prob = is_scale_prob
-        # self.n_experts = n_experts
-        # self.drop_tokens = drop_tokens
+        self.capacity_factor = capacity_factor
+        self.is_scale_prob = is_scale_prob
+        self.n_experts = n_experts
+        self.drop_tokens = drop_tokens
         # self.experts = clone_module_list(expert, n_experts)
-        # self.switch = nn.Linear(d_model, n_experts)
-        # self.softmax = nn.Softmax(dim=-1)
+        self.switch = nn.Linear(d_model, n_experts)
+        self.softmax = nn.Softmax(dim=-1)
         self.layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
 
     def forward(self, hidden_states):
+        hidden_states = hidden_states.permute(0,1)
         # x = hidden_states
-        # seq_len, batch_size, d_model = hidden_states.shape
+        print(">>> Hidden states shape", hidden_states.shape)
+        seq_len, batch_size, d_model = hidden_states.shape
+        print(">>> SEQ ASSIGNED:", seq_len)
+        print(">>> batch_size ASSIGNED:", batch_size)
+        print(">>> d_model ASSIGNED:", d_model)
         # x = x.view(-1, d_model)
         # route_prob = self.softmax(self.switch(x))
         # route_prob_max, routes = torch.max(route_prob, dim=-1)
