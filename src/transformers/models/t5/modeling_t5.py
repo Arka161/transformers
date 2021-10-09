@@ -534,6 +534,8 @@ class T5Attention(nn.Module):
         # Mask is (batch_size, key_length) (non-causal) or (batch_size, key_length, key_length)
         # past_key_value[0] is (batch_size, n_heads, q_len - 1, dim_per_head)
         batch_size, seq_length = hidden_states.shape[:2]
+        print(">>> BATCH SIZE", batch_size)
+        print(">>> seq_length", seq_length)
 
         real_seq_length = seq_length
 
@@ -1010,6 +1012,7 @@ class T5Stack(T5PreTrainedModel):
             inputs_embeds = self.embed_tokens(input_ids)
 
         batch_size, seq_length = input_shape
+        print(">>>> SEQ LEN", seq_length)
 
         # required mask seq length can be calculated via length of past
         mask_seq_length = past_key_values[0][0].shape[2] + seq_length if past_key_values is not None else seq_length
