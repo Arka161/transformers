@@ -328,10 +328,10 @@ class T5LayerFF(nn.Module):
             raise ValueError(
                 f"{self.config.feed_forward_proj} is not supported. Choose between `relu` and `gated-gelu`"
             )
-        self.capacity_factor = capacity_factor
-        self.is_scale_prob = is_scale_prob
-        self.n_experts = n_experts
-        self.drop_tokens = drop_tokens
+        # self.capacity_factor = capacity_factor
+        # self.is_scale_prob = is_scale_prob
+        # self.n_experts = n_experts
+        # self.drop_tokens = drop_tokens
         # self.experts = clone_module_list(expert, n_experts)
         # self.switch = nn.Linear(d_model, n_experts)
         self.softmax = nn.Softmax(dim=-1)
