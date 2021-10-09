@@ -400,6 +400,7 @@ class T5LayerFF(nn.Module):
 
         # return final_output, counts, route_prob.sum(0), len(dropped), route_prob_max
         print(">>> HIDDEN STATES SHAPE", hidden_states.shape)
+        print("Added log")
 
 
         forwarded_states = self.layer_norm(hidden_states)
