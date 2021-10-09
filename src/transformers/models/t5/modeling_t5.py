@@ -399,7 +399,7 @@ class T5LayerFF(nn.Module):
         # # These are used for the load balancing loss and logging
 
         # return final_output, counts, route_prob.sum(0), len(dropped), route_prob_max
-        print(">>> HIDDEN STATES SHAPE", hidden_states)
+        print(">>> HIDDEN STATES SHAPE", hidden_states.shape)
 
 
         forwarded_states = self.layer_norm(hidden_states)
