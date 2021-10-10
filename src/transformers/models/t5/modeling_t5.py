@@ -339,7 +339,7 @@ class T5LayerFF(nn.Module):
         self.dropout = nn.Dropout(config.dropout_rate)
 
     def forward(self, hidden_states):
-        hidden_states = hidden_states.transpose(0,1)
+        #hidden_states = hidden_states.transpose(0,1)
         # x = hidden_states
         print(">>> Hidden states shape", hidden_states.shape)
         seq_len, batch_size, d_model = hidden_states.shape
