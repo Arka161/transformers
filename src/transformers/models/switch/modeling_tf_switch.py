@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright 2020 T5 Authors and The HuggingFace Inc. team.
+# Copyright 2020 Switch Authors and The HuggingFace Inc. team.
 # Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" TF 2.0 T5 model. """
+""" TF 2.0 Switch model. """
 
 import copy
 import itertools
@@ -47,21 +47,21 @@ from ...modeling_tf_utils import (
     shape_list,
 )
 from ...utils import logging
-from .configuration_t5 import T5Config
+from .configuration_switch import SwitchConfig
 
 
 logger = logging.get_logger(__name__)
 
-_CONFIG_FOR_DOC = "T5Config"
-_TOKENIZER_FOR_DOC = "T5Tokenizer"
+_CONFIG_FOR_DOC = "SwitchConfig"
+_TOKENIZER_FOR_DOC = "SwitchTokenizer"
 
-TF_T5_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "t5-small",
-    "t5-base",
-    "t5-large",
-    "t5-3b",
-    "t5-11b",
-    # See all T5 models at https://huggingface.co/models?filter=t5
+TF_Switch_PRETRAINED_MODEL_ARCHIVE_LIST = [
+    "switch-small",
+    "switch-base",
+    "switch-large",
+    "switch-3b",
+    "switch-11b",
+    # See all Switch models at https://huggingface.co/models?filter=switch
 ]
 
 ####################################################
@@ -71,10 +71,10 @@ TF_T5_PRETRAINED_MODEL_ARCHIVE_LIST = [
 ####################################################
 
 
-class TFT5LayerNorm(tf.keras.layers.Layer):
+class TFSwitchLayerNorm(tf.keras.layers.Layer):
     def __init__(self, epsilon=1e-6, **kwargs):
         """
-        Construct a layernorm module in the T5 style No bias and no subtraction of mean.
+        Construct a layernorm module in the Switch style No bias and no subtraction of mean.
         """
         super().__init__(**kwargs)
         self.variance_epsilon = epsilon
@@ -90,7 +90,7 @@ class TFT5LayerNorm(tf.keras.layers.Layer):
         return self.weight * hidden_states
 
 
-class TFT5DenseReluDense(tf.keras.layers.Layer):
+class TFSwitchDenseReluDense(tf.keras.layers.Layer):
     def __init__(self, config, **kwargs):
         super().__init__(**kwargs)
         self.wi = tf.keras.layers.Dense(config.d_ff, use_bias=False, name="wi")
@@ -106,7 +106,7 @@ class TFT5DenseReluDense(tf.keras.layers.Layer):
         return hidden_states
 
 
-class TFT5GatedGeluDense(tf.keras.layers.Layer):
+class TFSwitchGatedGeluDense(tf.keras.layers.Layer):
     def __init__(self, config, **kwargs):
         super().__init__(**kwargs)
         self.wi_0 = tf.keras.layers.Dense(config.d_ff, use_bias=False, name="wi_0")
@@ -124,18 +124,18 @@ class TFT5GatedGeluDense(tf.keras.layers.Layer):
         return hidden_states
 
 
-class TFT5LayerFF(tf.keras.layers.Layer):
+class TFSwitchLayerFF(tf.keras.layers.Layer):
     def __init__(self, config, **kwargs):
         super().__init__(**kwargs)
         if config.feed_forward_proj == "relu":
-            self.DenseReluDense = TFT5DenseReluDense(config, name="DenseReluDense")
+            self.DenseReluDense = TFSwitchDenseReluDense(config, name="DenseReluDense")
         elif config.feed_forward_proj == "gated-gelu":
-            self.DenseReluDense = TFT5GatedGeluDense(config, name="DenseReluDense")
+            self.DenseReluDense = TFSwitchGatedGeluDense(config, name="DenseReluDense")
         else:
             raise ValueError(
                 f"{self.config.feed_forward_proj} is not supported. Choose between `relu` and `gated-gelu`"
             )
-        self.layer_norm = TFT5LayerNorm(epsilon=config.layer_norm_epsilon, name="layer_norm")
+        self.layer_norm = TFSwitchLayerNorm(epsilon=config.layer_norm_epsilon, name="layer_norm")
         self.dropout = tf.keras.layers.Dropout(config.dropout_rate)
 
     def call(self, hidden_states, training=False):
@@ -145,12 +145,12 @@ class TFT5LayerFF(tf.keras.layers.Layer):
         return hidden_states
 
 
-class TFT5Attention(tf.keras.layers.Layer):
+class TFSwitchAttention(tf.keras.layers.Layer):
     NEW_ID = itertools.count()
 
     def __init__(self, config, has_relative_attention_bias=False, **kwargs):
         super().__init__(**kwargs)
-        self.layer_id = next(TFT5Attention.NEW_ID)
+        self.layer_id = next(TFSwitchAttention.NEW_ID)
         self.is_decoder = config.is_decoder
         self.use_cache = config.use_cache
         self.has_relative_attention_bias = has_relative_attention_bias
@@ -370,15 +370,15 @@ class TFT5Attention(tf.keras.layers.Layer):
         return outputs
 
 
-class TFT5LayerSelfAttention(tf.keras.layers.Layer):
+class TFSwitchLayerSelfAttention(tf.keras.layers.Layer):
     def __init__(self, config, has_relative_attention_bias=False, **kwargs):
         super().__init__(**kwargs)
-        self.SelfAttention = TFT5Attention(
+        self.SelfAttention = TFSwitchAttention(
             config,
             has_relative_attention_bias=has_relative_attention_bias,
             name="SelfAttention",
         )
-        self.layer_norm = TFT5LayerNorm(epsilon=config.layer_norm_epsilon, name="layer_norm")
+        self.layer_norm = TFSwitchLayerNorm(epsilon=config.layer_norm_epsilon, name="layer_norm")
         self.dropout = tf.keras.layers.Dropout(config.dropout_rate)
 
     def call(
@@ -408,15 +408,15 @@ class TFT5LayerSelfAttention(tf.keras.layers.Layer):
         return outputs
 
 
-class TFT5LayerCrossAttention(tf.keras.layers.Layer):
+class TFSwitchLayerCrossAttention(tf.keras.layers.Layer):
     def __init__(self, config, **kwargs):
         super().__init__(**kwargs)
-        self.EncDecAttention = TFT5Attention(
+        self.EncDecAttention = TFSwitchAttention(
             config,
             has_relative_attention_bias=False,
             name="EncDecAttention",
         )
-        self.layer_norm = TFT5LayerNorm(epsilon=config.layer_norm_epsilon, name="layer_norm")
+        self.layer_norm = TFSwitchLayerNorm(epsilon=config.layer_norm_epsilon, name="layer_norm")
         self.dropout = tf.keras.layers.Dropout(config.dropout_rate)
 
     def call(
@@ -450,13 +450,13 @@ class TFT5LayerCrossAttention(tf.keras.layers.Layer):
         return outputs
 
 
-class TFT5Block(tf.keras.layers.Layer):
+class TFSwitchBlock(tf.keras.layers.Layer):
     def __init__(self, config, has_relative_attention_bias=False, **kwargs):
         super().__init__(**kwargs)
         self.is_decoder = config.is_decoder
         self.layer = []
         self.layer.append(
-            TFT5LayerSelfAttention(
+            TFSwitchLayerSelfAttention(
                 config,
                 has_relative_attention_bias=has_relative_attention_bias,
                 name="layer_._0",
@@ -464,13 +464,13 @@ class TFT5Block(tf.keras.layers.Layer):
         )
         if self.is_decoder:
             self.layer.append(
-                TFT5LayerCrossAttention(
+                TFSwitchLayerCrossAttention(
                     config,
                     name="layer_._1",
                 )
             )
 
-        self.layer.append(TFT5LayerFF(config, name=f"layer_._{len(self.layer)}"))
+        self.layer.append(TFSwitchLayerFF(config, name=f"layer_._{len(self.layer)}"))
 
     def call(
         self,
@@ -556,11 +556,11 @@ class TFT5Block(tf.keras.layers.Layer):
 
 ####################################################
 # The full model without a specific pretrained or finetuning head is
-# provided as a tf.keras.layers.Layer usually called "TFT5MainLayer"
+# provided as a tf.keras.layers.Layer usually called "TFSwitchMainLayer"
 ####################################################
 @keras_serializable
-class TFT5MainLayer(tf.keras.layers.Layer):
-    config_class = T5Config
+class TFSwitchMainLayer(tf.keras.layers.Layer):
+    config_class = SwitchConfig
 
     def __init__(self, config, embed_tokens=None, **kwargs):
         super().__init__(**kwargs)
@@ -577,10 +577,10 @@ class TFT5MainLayer(tf.keras.layers.Layer):
         self.num_hidden_layers = config.num_layers
 
         self.block = [
-            TFT5Block(config, has_relative_attention_bias=bool(i == 0), name=f"block_._{i}")
+            TFSwitchBlock(config, has_relative_attention_bias=bool(i == 0), name=f"block_._{i}")
             for i in range(config.num_layers)
         ]
-        self.final_layer_norm = TFT5LayerNorm(epsilon=config.layer_norm_epsilon, name="final_layer_norm")
+        self.final_layer_norm = TFSwitchLayerNorm(epsilon=config.layer_norm_epsilon, name="final_layer_norm")
         self.dropout = tf.keras.layers.Dropout(config.dropout_rate)
 
     def _prune_heads(self, heads_to_prune):
@@ -692,7 +692,7 @@ class TFT5MainLayer(tf.keras.layers.Layer):
         # Since we are adding it to the raw scores before the softmax, this is
         # effectively the same as removing these entirely.
 
-        # T5 has a mask that can compare sequence ids, we can simulate this here with this transposition
+        # Switch has a mask that can compare sequence ids, we can simulate this here with this transposition
         # Cf. https://github.com/tensorflow/mesh/blob/8d2465e9bc93129b913b5ccc6a59aa97abd96ec6/mesh_tensorflow/transformer/transformer_layers.py#L270
         # extended_attention_mask = tf.math.equal(extended_attention_mask,
         #                                         tf.transpose(extended_attention_mask, perm=(-1, -2)))
@@ -712,7 +712,7 @@ class TFT5MainLayer(tf.keras.layers.Layer):
             if num_dims_encoder_attention_mask == 2:
                 encoder_extended_attention_mask = inputs["encoder_attention_mask"][:, None, None, :]
 
-            # T5 has a mask that can compare sequence ids, we can simulate this here with this transposition
+            # Switch has a mask that can compare sequence ids, we can simulate this here with this transposition
             # Cf. https://github.com/tensorflow/mesh/blob/8d2465e9bc93129b913b5ccc6a59aa97abd96ec6/mesh_tensorflow/transformer/transformer_layers.py#L270
             # encoder_extended_attention_mask = tf.math.equal(encoder_extended_attention_mask,
             #                                         tf.transpose(encoder_extended_attention_mask, perm=(-1, -2)))
@@ -802,19 +802,19 @@ class TFT5MainLayer(tf.keras.layers.Layer):
 
 
 ####################################################
-# TFT5PreTrainedModel is a sub-class of tf.keras.Model
+# TFSwitchPreTrainedModel is a sub-class of tf.keras.Model
 # which take care of loading and saving pretrained weights
 # and various common utilities.
 # Here you just need to specify a few (self-explanatory)
 # pointers for your model.
 ####################################################
-class TFT5PreTrainedModel(TFPreTrainedModel):
+class TFSwitchPreTrainedModel(TFPreTrainedModel):
     """
     An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
     models.
     """
 
-    config_class = T5Config
+    config_class = SwitchConfig
     base_model_prefix = "transformer"
     # names with a '.' represents the authorized unexpected/missing layers when a TF model is loaded from a PT model
     _keys_to_ignore_on_load_unexpected = [r"decoder\Wblock[\W_0]+layer[\W_1]+EncDecAttention\Wrelative_attention_bias"]
@@ -871,7 +871,7 @@ class TFT5PreTrainedModel(TFPreTrainedModel):
 
         assert (
             decoder_start_token_id is not None
-        ), "self.model.config.decoder_start_token_id has to be defined. In TF T5 it is usually set to the pad_token_id. See T5 docs for more information"
+        ), "self.model.config.decoder_start_token_id has to be defined. In TF Switch it is usually set to the pad_token_id. See Switch docs for more information"
 
         start_tokens = tf.fill((shape_list(input_ids)[0], 1), decoder_start_token_id)
         start_tokens = tf.cast(start_tokens, input_ids.dtype)  # Ensure compatible dtypes for concatenation
@@ -897,9 +897,9 @@ class TFT5PreTrainedModel(TFPreTrainedModel):
         return shifted_input_ids
 
 
-T5_START_DOCSTRING = r"""
+Switch_START_DOCSTRING = r"""
 
-    The T5 model was proposed in `Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer
+    The Switch model was proposed in `Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer
     <https://arxiv.org/abs/1910.10683>`__ by Colin Raffel, Noam Shazeer, Adam Roberts, Katherine Lee, Sharan Narang,
     Michael Matena, Yanqi Zhou, Wei Li, Peter J. Liu. It's an encoder decoder transformer pre-trained in a text-to-text
     denoising generative setting.
@@ -932,16 +932,16 @@ T5_START_DOCSTRING = r"""
           :obj:`model({"input_ids": input_ids, "token_type_ids": token_type_ids})`
 
     Parameters:
-        config (:class:`~transformers.T5Config`): Model configuration class with all the parameters of the model.
+        config (:class:`~transformers.SwitchConfig`): Model configuration class with all the parameters of the model.
             Initializing with a config file does not load the weights associated with the model, only the
             configuration. Check out the :meth:`~transformers.PreTrainedModel.from_pretrained` method to load the model
             weights.
 """
 
-T5_INPUTS_DOCSTRING = r"""
+Switch_INPUTS_DOCSTRING = r"""
     Args:
         input_ids (:obj:`tf.Tensor` of shape :obj:`(batch_size, sequence_length)`):
-            Indices of input sequence tokens in the vocabulary. T5 is a model with relative position embeddings so you
+            Indices of input sequence tokens in the vocabulary. Switch is a model with relative position embeddings so you
             should be able to pad the inputs on the right or the left.
 
             Indices can be obtained using :class:`~transformers.BertTokenizer`. See
@@ -950,15 +950,15 @@ T5_INPUTS_DOCSTRING = r"""
 
             `What are input IDs? <../glossary.html#input-ids>`__
 
-            To know more on how to prepare :obj:`inputs` for pretraining take a look at `T5 Training
-            <./t5.html#training>`__.
+            To know more on how to prepare :obj:`inputs` for pretraining take a look at `Switch Training
+            <./switch.html#training>`__.
         decoder_input_ids (:obj:`tf.Tensor` of shape :obj:`(batch_size, target_sequence_length)`, `optional`):
-            Provide for sequence to sequence training. T5 uses the :obj:`pad_token_id` as the starting token for
+            Provide for sequence to sequence training. Switch uses the :obj:`pad_token_id` as the starting token for
             :obj:`decoder_input_ids` generation. If :obj:`past_key_values` is used, optionally only the last
             :obj:`decoder_input_ids` have to be input (see :obj:`past_key_values`).
 
-            To know more on how to prepare :obj:`decoder_input_ids` for pretraining take a look at `T5 Training
-            <./t5.html#training>`__.
+            To know more on how to prepare :obj:`decoder_input_ids` for pretraining take a look at `Switch Training
+            <./switch.html#training>`__.
         attention_mask (:obj:`tf.Tensor` of shape :obj:`(batch_size, sequence_length)`, `optional`):
             Mask to avoid performing attention on padding token indices. Mask values selected in ``[0, 1]``:
 
@@ -1025,18 +1025,18 @@ T5_INPUTS_DOCSTRING = r"""
             behaviors between training and evaluation).
 """
 
-T5_ENCODER_INPUTS_DOCSTRING = r"""
+Switch_ENCODER_INPUTS_DOCSTRING = r"""
     Args:
         inputs (:obj:`tf.Tensor` of shape :obj:`(batch_size, sequence_length)`):
-            Indices of input sequence tokens in the vocabulary. T5 is a model with relative position embeddings so you
+            Indices of input sequence tokens in the vocabulary. Switch is a model with relative position embeddings so you
             should be able to pad the inputs on the right or the left.
 
-            Indices can be obtained using :class:`~transformers.T5Tokenizer`. See
+            Indices can be obtained using :class:`~transformers.SwitchTokenizer`. See
             :func:`transformers.PreTrainedTokenizer.__call__` and :func:`transformers.PreTrainedTokenizer.encode` for
             details.
 
-            To know more on how to prepare :obj:`inputs` for pre-training take a look at `T5 Training
-            <./t5.html#training>`__.
+            To know more on how to prepare :obj:`inputs` for pre-training take a look at `Switch Training
+            <./switch.html#training>`__.
         attention_mask (:obj:`tf.Tensor` of shape :obj:`(batch_size, sequence_length)`, `optional`):
             Mask to avoid performing attention on padding token indices. Mask values selected in ``[0, 1]``:
 
@@ -1076,10 +1076,10 @@ num_heads))`.
 
 
 @add_start_docstrings(
-    "The bare T5 Model transformer outputting raw hidden-states" "without any specific head on top.",
-    T5_START_DOCSTRING,
+    "The bare Switch Model transformer outputting raw hidden-states" "without any specific head on top.",
+    Switch_START_DOCSTRING,
 )
-class TFT5Model(TFT5PreTrainedModel):
+class TFSwitchModel(TFSwitchPreTrainedModel):
     def __init__(self, config, *inputs, **kwargs):
         super().__init__(config, *inputs, **kwargs)
         self.shared = TFSharedEmbeddings(config.vocab_size, config.d_model, name="shared")
@@ -1092,12 +1092,12 @@ class TFT5Model(TFT5PreTrainedModel):
 
         encoder_config = copy.deepcopy(config)
         encoder_config.use_cache = False
-        self.encoder = TFT5MainLayer(encoder_config, embed_tokens, name="encoder")
+        self.encoder = TFSwitchMainLayer(encoder_config, embed_tokens, name="encoder")
 
         decoder_config = copy.deepcopy(config)
         decoder_config.is_decoder = True
         decoder_config.num_layers = config.num_decoder_layers
-        self.decoder = TFT5MainLayer(decoder_config, embed_tokens, name="decoder")
+        self.decoder = TFSwitchMainLayer(decoder_config, embed_tokens, name="decoder")
 
     def get_encoder(self):
         return self.encoder
@@ -1105,7 +1105,7 @@ class TFT5Model(TFT5PreTrainedModel):
     def get_decoder(self):
         return self.decoder
 
-    @add_start_docstrings_to_model_forward(T5_INPUTS_DOCSTRING)
+    @add_start_docstrings_to_model_forward(Switch_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=TFSeq2SeqModelOutput, config_class=_CONFIG_FOR_DOC)
     def call(
         self,
@@ -1131,10 +1131,10 @@ class TFT5Model(TFT5PreTrainedModel):
 
         Examples::
 
-            >>> from transformers import T5Tokenizer, TFT5Model
+            >>> from transformers import SwitchTokenizer, TFSwitchModel
 
-            >>> tokenizer = T5Tokenizer.from_pretrained('t5-small')
-            >>> model = TFT5Model.from_pretrained('t5-small')
+            >>> tokenizer = SwitchTokenizer.from_pretrained('switch-small')
+            >>> model = TFSwitchModel.from_pretrained('switch-small')
 
             >>> input_ids = tokenizer("Studies have been shown that owning a dog is good for you", return_tensors="tf").input_ids  # Batch size 1
             >>> decoder_input_ids = tokenizer("Studies show that", return_tensors="tf").input_ids  # Batch size 1
@@ -1242,8 +1242,8 @@ class TFT5Model(TFT5PreTrainedModel):
         )
 
 
-@add_start_docstrings("""T5 Model with a `language modeling` head on top. """, T5_START_DOCSTRING)
-class TFT5ForConditionalGeneration(TFT5PreTrainedModel, TFCausalLanguageModelingLoss):
+@add_start_docstrings("""Switch Model with a `language modeling` head on top. """, Switch_START_DOCSTRING)
+class TFSwitchForConditionalGeneration(TFSwitchPreTrainedModel, TFCausalLanguageModelingLoss):
     def __init__(self, config, *inputs, **kwargs):
         super().__init__(config, *inputs, **kwargs)
         self.model_dim = config.d_model
@@ -1258,12 +1258,12 @@ class TFT5ForConditionalGeneration(TFT5PreTrainedModel, TFCausalLanguageModeling
 
         encoder_config = copy.deepcopy(config)
         encoder_config.use_cache = False
-        self.encoder = TFT5MainLayer(encoder_config, embed_tokens, name="encoder")
+        self.encoder = TFSwitchMainLayer(encoder_config, embed_tokens, name="encoder")
 
         decoder_config = copy.deepcopy(config)
         decoder_config.is_decoder = True
         decoder_config.num_layers = config.num_decoder_layers
-        self.decoder = TFT5MainLayer(decoder_config, embed_tokens, name="decoder")
+        self.decoder = TFSwitchMainLayer(decoder_config, embed_tokens, name="decoder")
 
         if not config.tie_word_embeddings:
             self.lm_head = tf.keras.layers.Dense(config.vocab_size, use_bias=False, name="lm_head")
@@ -1292,7 +1292,7 @@ class TFT5ForConditionalGeneration(TFT5PreTrainedModel, TFCausalLanguageModeling
     def get_decoder(self):
         return self.decoder
 
-    @add_start_docstrings_to_model_forward(T5_INPUTS_DOCSTRING)
+    @add_start_docstrings_to_model_forward(Switch_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=TFSeq2SeqLMOutput, config_class=_CONFIG_FOR_DOC)
     def call(
         self,
@@ -1323,10 +1323,10 @@ class TFT5ForConditionalGeneration(TFT5PreTrainedModel, TFCausalLanguageModeling
 
         Examples::
 
-            >>> from transformers import T5Tokenizer, TFT5ForConditionalGeneration
+            >>> from transformers import SwitchTokenizer, TFSwitchForConditionalGeneration
 
-            >>> tokenizer = T5Tokenizer.from_pretrained('t5-small')
-            >>> model = TFT5ForConditionalGeneration.from_pretrained('t5-small')
+            >>> tokenizer = SwitchTokenizer.from_pretrained('switch-small')
+            >>> model = TFSwitchForConditionalGeneration.from_pretrained('switch-small')
 
             >>> # training
             >>> inputs = tokenizer('The <extra_id_0> walks in <extra_id_1> park', return_tensors='tf').input_ids
@@ -1410,7 +1410,7 @@ class TFT5ForConditionalGeneration(TFT5PreTrainedModel, TFCausalLanguageModeling
 
         sequence_output = decoder_outputs[0]
 
-        # T5v1.1 does not tie output word embeddings and thus does not require downscaling
+        # Switchv1.1 does not tie output word embeddings and thus does not require downscaling
         if self.config.tie_word_embeddings:
             sequence_output = sequence_output * (self.model_dim ** -0.5)
             logits = self.shared(sequence_output, mode="linear")
@@ -1541,10 +1541,10 @@ class TFT5ForConditionalGeneration(TFT5PreTrainedModel, TFCausalLanguageModeling
 
 
 @add_start_docstrings(
-    "The bare T5 Model transformer outputting encoder's raw hidden-states" "without any specific head on top.",
-    T5_START_DOCSTRING,
+    "The bare Switch Model transformer outputting encoder's raw hidden-states" "without any specific head on top.",
+    Switch_START_DOCSTRING,
 )
-class TFT5EncoderModel(TFT5PreTrainedModel):
+class TFSwitchEncoderModel(TFSwitchPreTrainedModel):
     def __init__(self, config, *inputs, **kwargs):
         super().__init__(config, *inputs, **kwargs)
         self.shared = TFSharedEmbeddings(config.vocab_size, config.d_model, name="shared")
@@ -1557,12 +1557,12 @@ class TFT5EncoderModel(TFT5PreTrainedModel):
 
         encoder_config = copy.deepcopy(config)
         encoder_config.use_cache = False
-        self.encoder = TFT5MainLayer(encoder_config, embed_tokens, name="encoder")
+        self.encoder = TFSwitchMainLayer(encoder_config, embed_tokens, name="encoder")
 
     def get_encoder(self):
         return self.encoder
 
-    @add_start_docstrings_to_model_forward(T5_ENCODER_INPUTS_DOCSTRING)
+    @add_start_docstrings_to_model_forward(Switch_ENCODER_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=TFBaseModelOutput, config_class=_CONFIG_FOR_DOC)
     def call(
         self,
@@ -1581,10 +1581,10 @@ class TFT5EncoderModel(TFT5PreTrainedModel):
 
         Examples::
 
-            >>> from transformers import T5Tokenizer, TFT5EncoderModel
+            >>> from transformers import SwitchTokenizer, TFSwitchEncoderModel
 
-            >>> tokenizer = T5Tokenizer.from_pretrained('t5-small')
-            >>> model = TFT5EncoderModel.from_pretrained('t5-small')
+            >>> tokenizer = SwitchTokenizer.from_pretrained('switch-small')
+            >>> model = TFSwitchEncoderModel.from_pretrained('switch-small')
 
             >>> input_ids = tokenizer("Studies have been shown that owning a dog is good for you", return_tensors="tf").input_ids  # Batch size 1
             >>> outputs = model(input_ids)

@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright 2020, The T5 Authors and HuggingFace Inc.
+# Copyright 2020, The Switch Authors and HuggingFace Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" T5 model configuration """
+""" Switch model configuration """
 from collections import OrderedDict
 from typing import Any, Dict, Iterable, Mapping, Optional
 
@@ -26,36 +26,36 @@ from ...utils import logging
 
 logger = logging.get_logger(__name__)
 
-T5_PRETRAINED_CONFIG_ARCHIVE_MAP = {
-    "t5-small": "https://huggingface.co/t5-small/resolve/main/config.json",
-    "t5-base": "https://huggingface.co/t5-base/resolve/main/config.json",
-    "t5-large": "https://huggingface.co/t5-large/resolve/main/config.json",
-    "t5-3b": "https://huggingface.co/t5-3b/resolve/main/config.json",
-    "t5-11b": "https://huggingface.co/t5-11b/resolve/main/config.json",
+Switch_PRETRAINED_CONFIG_ARCHIVE_MAP = {
+    "switch-small": "https://huggingface.co/switch-small/resolve/main/config.json",
+    "switch-base": "https://huggingface.co/switch-base/resolve/main/config.json",
+    "switch-large": "https://huggingface.co/switch-large/resolve/main/config.json",
+    "switch-3b": "https://huggingface.co/switch-3b/resolve/main/config.json",
+    "switch-11b": "https://huggingface.co/switch-11b/resolve/main/config.json",
 }
 
 
-class T5Config(PretrainedConfig):
+class SwitchConfig(PretrainedConfig):
     r"""
-    This is the configuration class to store the configuration of a :class:`~transformers.T5Model` or a
-    :class:`~transformers.TFT5Model`. It is used to instantiate a T5 model according to the specified arguments,
+    This is the configuration class to store the configuration of a :class:`~transformers.SwitchModel` or a
+    :class:`~transformers.TFSwitchModel`. It is used to instantiate a Switch model according to the specified arguments,
     defining the model architecture. Instantiating a configuration with the defaults will yield a similar configuration
-    to that of the T5 `t5-small <https://huggingface.co/t5-small>`__ architecture.
+    to that of the Switch `switch-small <https://huggingface.co/switch-small>`__ architecture.
 
     Configuration objects inherit from :class:`~transformers.PretrainedConfig` and can be used to control the model
     outputs. Read the documentation from :class:`~transformers.PretrainedConfig` for more information.
 
     Arguments:
         vocab_size (:obj:`int`, `optional`, defaults to 32128):
-            Vocabulary size of the T5 model. Defines the number of different tokens that can be represented by the
-            :obj:`inputs_ids` passed when calling :class:`~transformers.T5Model` or :class:`~transformers.TFT5Model`.
+            Vocabulary size of the Switch model. Defines the number of different tokens that can be represented by the
+            :obj:`inputs_ids` passed when calling :class:`~transformers.SwitchModel` or :class:`~transformers.TFSwitchModel`.
         d_model (:obj:`int`, `optional`, defaults to 512):
             Size of the encoder layers and the pooler layer.
         d_kv (:obj:`int`, `optional`, defaults to 64):
             Size of the key, query, value projections per attention head. :obj:`d_kv` has to be equal to :obj:`d_model
             // num_heads`.
         d_ff (:obj:`int`, `optional`, defaults to 2048):
-            Size of the intermediate feed forward layer in each :obj:`T5Block`.
+            Size of the intermediate feed forward layer in each :obj:`SwitchBlock`.
         num_layers (:obj:`int`, `optional`, defaults to 6):
             Number of hidden layers in the Transformer encoder.
         num_decoder_layers (:obj:`int`, `optional`):
@@ -73,12 +73,12 @@ class T5Config(PretrainedConfig):
             A factor for initializing all weight matrices (should be kept to 1, used internally for initialization
             testing).
         feed_forward_proj (:obj:`string`, `optional`, defaults to :obj:`"relu"`):
-            Type of feed forward layer to be used. Should be one of :obj:`"relu"` or :obj:`"gated-gelu"`. T5v1.1 uses
-            the :obj:`"gated-gelu"` feed forward projection. Original T5 uses :obj:`"relu"`.
+            Type of feed forward layer to be used. Should be one of :obj:`"relu"` or :obj:`"gated-gelu"`. Switchv1.1 uses
+            the :obj:`"gated-gelu"` feed forward projection. Original Switch uses :obj:`"relu"`.
         use_cache (:obj:`bool`, `optional`, defaults to :obj:`True`):
             Whether or not the model should return the last key/values attentions (not used by all models).
     """
-    model_type = "t5"
+    model_type = "switch"
     keys_to_ignore_at_inference = ["past_key_values"]
     attribute_map = {"hidden_size": "d_model", "num_attention_heads": "num_heads", "num_hidden_layers": "num_layers"}
 
@@ -125,7 +125,7 @@ class T5Config(PretrainedConfig):
         )
 
 
-class T5OnnxConfig(OnnxConfigWithPast):
+class SwitchOnnxConfig(OnnxConfigWithPast):
     @property
     def inputs(self) -> Mapping[str, Mapping[int, str]]:
         common_inputs = OrderedDict(

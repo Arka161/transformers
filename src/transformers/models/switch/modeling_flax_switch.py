@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright 2021 T5 Authors and HuggingFace Inc. team.
+# Copyright 2021 Switch Authors and HuggingFace Inc. team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" Flax T5 model. """
+""" Flax Switch model. """
 
 
 import copy
@@ -44,14 +44,14 @@ from ...modeling_flax_utils import (
     overwrite_call_docstring,
 )
 from ...utils import logging
-from .configuration_t5 import T5Config
+from .configuration_switch import SwitchConfig
 
 
 logger = logging.get_logger(__name__)
 
-_CHECKPOINT_FOR_DOC = "t5-small"
-_CONFIG_FOR_DOC = "T5Config"
-_TOKENIZER_FOR_DOC = "T5Tokenizer"
+_CHECKPOINT_FOR_DOC = "switch-small"
+_CONFIG_FOR_DOC = "SwitchConfig"
+_TOKENIZER_FOR_DOC = "SwitchTokenizer"
 
 
 # Copied from transformers.models.bart.modeling_flax_bart.shift_tokens_right
@@ -67,7 +67,7 @@ def shift_tokens_right(input_ids: np.array, pad_token_id: int, decoder_start_tok
     return shifted_input_ids
 
 
-class FlaxT5LayerNorm(nn.Module):
+class FlaxSwitchLayerNorm(nn.Module):
     hidden_size: int
     dtype: jnp.dtype = jnp.float32
     eps: float = 1e-6
@@ -78,7 +78,7 @@ class FlaxT5LayerNorm(nn.Module):
 
     def __call__(self, hidden_states):
         """
-        Construct a layernorm module in the T5 style; No bias and no subtraction of mean.
+        Construct a layernorm module in the Switch style; No bias and no subtraction of mean.
         """
         # layer norm should always be calculated in float32
         variance = jnp.power(hidden_states.astype("f4"), 2).mean(axis=-1, keepdims=True)
@@ -87,8 +87,8 @@ class FlaxT5LayerNorm(nn.Module):
         return self.weight * hidden_states
 
 
-class FlaxT5DenseReluDense(nn.Module):
-    config: T5Config
+class FlaxSwitchDenseReluDense(nn.Module):
+    config: SwitchConfig
     dtype: jnp.dtype = jnp.float32
 
     def setup(self):
@@ -117,8 +117,8 @@ class FlaxT5DenseReluDense(nn.Module):
         return hidden_states
 
 
-class FlaxT5DenseGatedGeluDense(nn.Module):
-    config: T5Config
+class FlaxSwitchDenseGatedGeluDense(nn.Module):
+    config: SwitchConfig
     dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
@@ -155,21 +155,21 @@ class FlaxT5DenseGatedGeluDense(nn.Module):
         return hidden_states
 
 
-class FlaxT5LayerFF(nn.Module):
-    config: T5Config
+class FlaxSwitchLayerFF(nn.Module):
+    config: SwitchConfig
     dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
         if self.config.feed_forward_proj == "relu":
-            self.DenseReluDense = FlaxT5DenseReluDense(self.config, dtype=self.dtype)
+            self.DenseReluDense = FlaxSwitchDenseReluDense(self.config, dtype=self.dtype)
         elif self.config.feed_forward_proj == "gated-gelu":
-            self.DenseReluDense = FlaxT5DenseGatedGeluDense(self.config, dtype=self.dtype)
+            self.DenseReluDense = FlaxSwitchDenseGatedGeluDense(self.config, dtype=self.dtype)
         else:
             raise ValueError(
                 f"{self.config.feed_forward_proj} is not supported. Choose between `relu` and `gated-gelu`"
             )
 
-        self.layer_norm = FlaxT5LayerNorm(self.config.d_model, eps=self.config.layer_norm_epsilon, dtype=self.dtype)
+        self.layer_norm = FlaxSwitchLayerNorm(self.config.d_model, eps=self.config.layer_norm_epsilon, dtype=self.dtype)
         self.dropout = nn.Dropout(self.config.dropout_rate)
 
     def __call__(self, hidden_states, deterministic=True):
@@ -179,8 +179,8 @@ class FlaxT5LayerFF(nn.Module):
         return hidden_states
 
 
-class FlaxT5Attention(nn.Module):
-    config: T5Config
+class FlaxSwitchAttention(nn.Module):
+    config: SwitchConfig
     has_relative_attention_bias: bool = False
     causal: bool = False
     dtype: jnp.dtype = jnp.float32  # the dtype of the computation
@@ -460,19 +460,19 @@ class FlaxT5Attention(nn.Module):
         return outputs
 
 
-class FlaxT5LayerSelfAttention(nn.Module):
-    config: T5Config
+class FlaxSwitchLayerSelfAttention(nn.Module):
+    config: SwitchConfig
     has_relative_attention_bias: bool = False
     dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
-        self.SelfAttention = FlaxT5Attention(
+        self.SelfAttention = FlaxSwitchAttention(
             self.config,
             has_relative_attention_bias=self.has_relative_attention_bias,
             causal=self.config.causal,
             dtype=self.dtype,
         )
-        self.layer_norm = FlaxT5LayerNorm(self.config.d_model, eps=self.config.layer_norm_epsilon, dtype=self.dtype)
+        self.layer_norm = FlaxSwitchLayerNorm(self.config.d_model, eps=self.config.layer_norm_epsilon, dtype=self.dtype)
         self.dropout = nn.Dropout(self.config.dropout_rate)
 
     def __call__(
@@ -498,12 +498,12 @@ class FlaxT5LayerSelfAttention(nn.Module):
         return outputs
 
 
-class FlaxT5LayerCrossAttention(nn.Module):
-    config: T5Config
+class FlaxSwitchLayerCrossAttention(nn.Module):
+    config: SwitchConfig
 
     def setup(self):
-        self.EncDecAttention = FlaxT5Attention(self.config, has_relative_attention_bias=False, causal=False)
-        self.layer_norm = FlaxT5LayerNorm(self.config.d_model, eps=self.config.layer_norm_epsilon)
+        self.EncDecAttention = FlaxSwitchAttention(self.config, has_relative_attention_bias=False, causal=False)
+        self.layer_norm = FlaxSwitchLayerNorm(self.config.d_model, eps=self.config.layer_norm_epsilon)
         self.dropout = nn.Dropout(self.config.dropout_rate)
 
     def __call__(
@@ -528,24 +528,24 @@ class FlaxT5LayerCrossAttention(nn.Module):
         return outputs
 
 
-class FlaxT5Block(nn.Module):
-    config: T5Config
+class FlaxSwitchBlock(nn.Module):
+    config: SwitchConfig
     has_relative_attention_bias: bool = False
     dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
         self.causal = self.config.causal
         self.layer = (
-            FlaxT5LayerSelfAttention(
+            FlaxSwitchLayerSelfAttention(
                 self.config, has_relative_attention_bias=self.has_relative_attention_bias, name=str(0)
             ),
         )
         feed_forward_index = 1
         if self.causal:
-            self.layer += (FlaxT5LayerCrossAttention(self.config, name=str(1)),)
+            self.layer += (FlaxSwitchLayerCrossAttention(self.config, name=str(1)),)
             feed_forward_index += 1
 
-        self.layer += (FlaxT5LayerFF(self.config, name=str(feed_forward_index)),)
+        self.layer += (FlaxSwitchLayerFF(self.config, name=str(feed_forward_index)),)
 
     def __call__(
         self,
@@ -598,13 +598,13 @@ class FlaxT5Block(nn.Module):
         return outputs
 
 
-class FlaxT5LayerCollection(nn.Module):
-    config: T5Config
+class FlaxSwitchLayerCollection(nn.Module):
+    config: SwitchConfig
     has_relative_attention_bias: bool
     dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
-        self.layer = FlaxT5Block(
+        self.layer = FlaxSwitchBlock(
             self.config, has_relative_attention_bias=self.has_relative_attention_bias, dtype=self.dtype
         )
 
@@ -634,14 +634,14 @@ class FlaxT5LayerCollection(nn.Module):
         )
 
 
-class FlaxT5BlockCollection(nn.Module):
-    config: T5Config
+class FlaxSwitchBlockCollection(nn.Module):
+    config: SwitchConfig
     dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
         self.causal = self.config.causal
         self.blocks = [
-            FlaxT5LayerCollection(self.config, has_relative_attention_bias=(i == 0), dtype=self.dtype, name=str(i))
+            FlaxSwitchLayerCollection(self.config, has_relative_attention_bias=(i == 0), dtype=self.dtype, name=str(i))
             for i in range(self.config.num_layers)
         ]
 
@@ -702,8 +702,8 @@ class FlaxT5BlockCollection(nn.Module):
         )
 
 
-class FlaxT5Stack(nn.Module):
-    config: T5Config
+class FlaxSwitchStack(nn.Module):
+    config: SwitchConfig
     embed_tokens: Optional[nn.Embed] = None
     dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
@@ -718,8 +718,8 @@ class FlaxT5Stack(nn.Module):
                 dtype=self.dtype,
             )
 
-        self.block = FlaxT5BlockCollection(self.config)
-        self.final_layer_norm = FlaxT5LayerNorm(
+        self.block = FlaxSwitchBlockCollection(self.config)
+        self.final_layer_norm = FlaxSwitchLayerNorm(
             self.config.d_model, eps=self.config.layer_norm_epsilon, dtype=self.dtype
         )
         self.dropout = nn.Dropout(self.config.dropout_rate)
@@ -778,18 +778,18 @@ class FlaxT5Stack(nn.Module):
         )
 
 
-T5_ENCODE_INPUTS_DOCSTRING = r"""
+Switch_ENCODE_INPUTS_DOCSTRING = r"""
     Args:
         input_ids (:obj:`jnp.ndarray` of shape :obj:`(batch_size, sequence_length)`):
-            Indices of input sequence tokens in the vocabulary. T5 is a model with relative position embeddings so you
+            Indices of input sequence tokens in the vocabulary. Switch is a model with relative position embeddings so you
             should be able to pad the inputs on both the right and the left.
 
-            Indices can be obtained using :class:`~transformers.T5Tokenizer`. See
+            Indices can be obtained using :class:`~transformers.SwitchTokenizer`. See
             :meth:`transformers.PreTrainedTokenizer.encode` and :meth:`transformers.PreTrainedTokenizer.__call__` for
             detail.
 
-            To know more on how to prepare :obj:`input_ids` for pretraining take a look a `T5 Training
-            <./t5.html#training>`__.
+            To know more on how to prepare :obj:`input_ids` for pretraining take a look a `Switch Training
+            <./switch.html#training>`__.
         attention_mask (:obj:`jnp.ndarray` of shape :obj:`(batch_size, sequence_length)`, `optional`):
             Mask to avoid performing attention on padding token indices. Mask values selected in ``[0, 1]``:
 
@@ -807,12 +807,12 @@ T5_ENCODE_INPUTS_DOCSTRING = r"""
             Whether or not to return a :class:`~transformers.file_utils.ModelOutput` instead of a plain tuple.
 """
 
-T5_DECODE_INPUTS_DOCSTRING = r"""
+Switch_DECODE_INPUTS_DOCSTRING = r"""
     Args:
         decoder_input_ids (:obj:`jnp.ndarray` of shape :obj:`(batch_size, target_sequence_length)`):
             Indices of decoder input sequence tokens in the vocabulary.
 
-            Indices can be obtained using :class:`~transformers.T5Tokenizer`. See
+            Indices can be obtained using :class:`~transformers.SwitchTokenizer`. See
             :meth:`transformers.PreTrainedTokenizer.encode` and :meth:`transformers.PreTrainedTokenizer.__call__` for
             details.
 
@@ -851,20 +851,20 @@ T5_DECODE_INPUTS_DOCSTRING = r"""
 """
 
 
-T5_INPUTS_DOCSTRING = r"""
+Switch_INPUTS_DOCSTRING = r"""
     Args:
         input_ids (:obj:`jnp.ndarray` of shape :obj:`(batch_size, sequence_length)`):
-            Indices of input sequence tokens in the vocabulary. T5 is a model with relative position embeddings so you
+            Indices of input sequence tokens in the vocabulary. Switch is a model with relative position embeddings so you
             should be able to pad the inputs on both the right and the left.
 
-            Indices can be obtained using :class:`~transformers.T5Tokenizer`. See
+            Indices can be obtained using :class:`~transformers.SwitchTokenizer`. See
             :meth:`transformers.PreTrainedTokenizer.encode` and :meth:`transformers.PreTrainedTokenizer.__call__` for
             detail.
 
             `What are input IDs? <../glossary.html#input-ids>`__
 
-            To know more on how to prepare :obj:`input_ids` for pretraining take a look a `T5 Training
-            <./t5.html#training>`__.
+            To know more on how to prepare :obj:`input_ids` for pretraining take a look a `Switch Training
+            <./switch.html#training>`__.
         attention_mask (:obj:`jnp.ndarray` of shape :obj:`(batch_size, sequence_length)`, `optional`):
             Mask to avoid performing attention on padding token indices. Mask values selected in ``[0, 1]``:
 
@@ -875,18 +875,18 @@ T5_INPUTS_DOCSTRING = r"""
         decoder_input_ids (:obj:`jnp.ndarray` of shape :obj:`(batch_size, target_sequence_length)`, `optional`):
             Indices of decoder input sequence tokens in the vocabulary.
 
-            Indices can be obtained using :class:`~transformers.T5Tokenizer`. See
+            Indices can be obtained using :class:`~transformers.SwitchTokenizer`. See
             :meth:`transformers.PreTrainedTokenizer.encode` and :meth:`transformers.PreTrainedTokenizer.__call__` for
             details.
 
             `What are decoder input IDs? <../glossary.html#decoder-input-ids>`__
 
-            T5 uses the :obj:`pad_token_id` as the starting token for :obj:`decoder_input_ids` generation. If
+            Switch uses the :obj:`pad_token_id` as the starting token for :obj:`decoder_input_ids` generation. If
             :obj:`past_key_values` is used, optionally only the last :obj:`decoder_input_ids` have to be input (see
             :obj:`past_key_values`).
 
-            To know more on how to prepare :obj:`decoder_input_ids` for pretraining take a look at `T5 Training
-            <./t5.html#training>`__.
+            To know more on how to prepare :obj:`decoder_input_ids` for pretraining take a look at `Switch Training
+            <./switch.html#training>`__.
         decoder_attention_mask (:obj:`jnp.ndarray` of shape :obj:`(batch_size, target_sequence_length)`, `optional`):
             Default behavior: generate a tensor that ignores pad tokens in :obj:`decoder_input_ids`. Causal mask will
             also be used by default.
@@ -914,19 +914,19 @@ T5_INPUTS_DOCSTRING = r"""
 """
 
 
-class FlaxT5PreTrainedModel(FlaxPreTrainedModel):
+class FlaxSwitchPreTrainedModel(FlaxPreTrainedModel):
     """
     An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
     models.
     """
 
-    config_class = T5Config
+    config_class = SwitchConfig
     base_model_prefix = "transformer"
     module_class: nn.Module = None
 
     def __init__(
         self,
-        config: T5Config,
+        config: SwitchConfig,
         input_shape: Tuple[int] = (1, 1),
         seed: int = 0,
         dtype: jnp.dtype = jnp.float32,
@@ -954,7 +954,7 @@ class FlaxT5PreTrainedModel(FlaxPreTrainedModel):
             decoder_attention_mask,
         )["params"]
 
-    @add_start_docstrings_to_model_forward(T5_INPUTS_DOCSTRING)
+    @add_start_docstrings_to_model_forward(Switch_INPUTS_DOCSTRING)
     def __call__(
         self,
         input_ids: jnp.ndarray,
@@ -1039,8 +1039,8 @@ class FlaxT5PreTrainedModel(FlaxPreTrainedModel):
         )
         return unfreeze(init_variables["cache"])
 
-    @add_start_docstrings(T5_ENCODE_INPUTS_DOCSTRING)
-    @replace_return_docstrings(output_type=FlaxBaseModelOutput, config_class=T5Config)
+    @add_start_docstrings(Switch_ENCODE_INPUTS_DOCSTRING)
+    @replace_return_docstrings(output_type=FlaxBaseModelOutput, config_class=SwitchConfig)
     def encode(
         self,
         input_ids: jnp.ndarray,
@@ -1057,10 +1057,10 @@ class FlaxT5PreTrainedModel(FlaxPreTrainedModel):
 
         Example::
 
-            >>> from transformers import T5Tokenizer, FlaxT5ForConditionalGeneration
+            >>> from transformers import SwitchTokenizer, FlaxSwitchForConditionalGeneration
 
-            >>> tokenizer = T5Tokenizer.from_pretrained('t5-small')
-            >>> model = FlaxT5ForConditionalGeneration.from_pretrained('t5-small')
+            >>> tokenizer = SwitchTokenizer.from_pretrained('switch-small')
+            >>> model = FlaxSwitchForConditionalGeneration.from_pretrained('switch-small')
 
             >>> text = "My friends are cool but they eat too many carbs."
             >>> inputs = tokenizer(text, return_tensors='np')
@@ -1096,8 +1096,8 @@ class FlaxT5PreTrainedModel(FlaxPreTrainedModel):
             method=_encoder_forward,
         )
 
-    @add_start_docstrings(T5_DECODE_INPUTS_DOCSTRING)
-    @replace_return_docstrings(output_type=FlaxBaseModelOutputWithPastAndCrossAttentions, config_class=T5Config)
+    @add_start_docstrings(Switch_DECODE_INPUTS_DOCSTRING)
+    @replace_return_docstrings(output_type=FlaxBaseModelOutputWithPastAndCrossAttentions, config_class=SwitchConfig)
     def decode(
         self,
         decoder_input_ids,
@@ -1117,11 +1117,11 @@ class FlaxT5PreTrainedModel(FlaxPreTrainedModel):
 
         Example::
 
-            >>> from transformers import T5Tokenizer, FlaxT5ForConditionalGeneration
+            >>> from transformers import SwitchTokenizer, FlaxSwitchForConditionalGeneration
             >>> import jax.numpy as jnp
 
-            >>> tokenizer = T5Tokenizer.from_pretrained('t5-small')
-            >>> model = FlaxT5ForConditionalGeneration.from_pretrained('t5-small')
+            >>> tokenizer = SwitchTokenizer.from_pretrained('switch-small')
+            >>> model = FlaxSwitchForConditionalGeneration.from_pretrained('switch-small')
 
             >>> text = "My friends are cool but they eat too many carbs."
             >>> inputs = tokenizer(text, return_tensors='np')
@@ -1157,7 +1157,7 @@ class FlaxT5PreTrainedModel(FlaxPreTrainedModel):
 
         # if past_key_values are passed then cache is already initialized a private flag init_cache has to be
         # passed down to ensure cache is used. It has to be made sure that cache is marked as mutable so that
-        # it can be changed by FlaxT5Attention module
+        # it can be changed by FlaxSwitchAttention module
         if past_key_values:
             inputs["cache"] = past_key_values
             mutable = ["cache"]
@@ -1199,8 +1199,8 @@ class FlaxT5PreTrainedModel(FlaxPreTrainedModel):
         return outputs
 
 
-T5_START_DOCSTRING = r"""
-    The T5 model was proposed in `Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer
+Switch_START_DOCSTRING = r"""
+    The Switch model was proposed in `Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer
     <https://arxiv.org/abs/1910.10683>`__ by Colin Raffel, Noam Shazeer, Adam Roberts, Katherine Lee, Sharan Narang,
     Michael Matena, Yanqi Zhou, Wei Li, Peter J. Liu. It's an encoder decoder transformer pre-trained in a text-to-text
     denoising generative setting.
@@ -1221,7 +1221,7 @@ T5_START_DOCSTRING = r"""
     - `Parallelization <https://jax.readthedocs.io/en/latest/jax.html#parallelization-pmap>`__
 
     Parameters:
-        config (:class:`~transformers.T5Config`): Model configuration class with all the parameters of the model.
+        config (:class:`~transformers.SwitchConfig`): Model configuration class with all the parameters of the model.
             Initializing with a config file does not load the weights associated with the model, only the
             configuration. Check out the :meth:`~transformers.FlaxPreTrainedModel.from_pretrained` method to load the
             model weights.
@@ -1229,11 +1229,11 @@ T5_START_DOCSTRING = r"""
 
 
 @add_start_docstrings(
-    "The bare T5 Model transformer outputting raw hidden-states" "without any specific head on top.",
-    T5_START_DOCSTRING,
+    "The bare Switch Model transformer outputting raw hidden-states" "without any specific head on top.",
+    Switch_START_DOCSTRING,
 )
-class FlaxT5Module(nn.Module):
-    config: T5Config
+class FlaxSwitchModule(nn.Module):
+    config: SwitchConfig
     dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def _get_encoder_module(self):
@@ -1252,12 +1252,12 @@ class FlaxT5Module(nn.Module):
 
         encoder_config = copy.deepcopy(self.config)
         encoder_config.causal = False
-        self.encoder = FlaxT5Stack(encoder_config, embed_tokens=self.shared, dtype=self.dtype)
+        self.encoder = FlaxSwitchStack(encoder_config, embed_tokens=self.shared, dtype=self.dtype)
 
         decoder_config = copy.deepcopy(self.config)
         decoder_config.causal = True
         decoder_config.num_layers = self.config.num_decoder_layers
-        self.decoder = FlaxT5Stack(decoder_config, embed_tokens=self.shared, dtype=self.dtype)
+        self.decoder = FlaxSwitchStack(decoder_config, embed_tokens=self.shared, dtype=self.dtype)
 
     def __call__(
         self,
@@ -1310,23 +1310,23 @@ class FlaxT5Module(nn.Module):
         )
 
 
-class FlaxT5Model(FlaxT5PreTrainedModel):
-    module_class = FlaxT5Module
+class FlaxSwitchModel(FlaxSwitchPreTrainedModel):
+    module_class = FlaxSwitchModule
 
 
 append_call_sample_docstring(
-    FlaxT5Model, _TOKENIZER_FOR_DOC, _CHECKPOINT_FOR_DOC, FlaxSeq2SeqModelOutput, _CONFIG_FOR_DOC
+    FlaxSwitchModel, _TOKENIZER_FOR_DOC, _CHECKPOINT_FOR_DOC, FlaxSeq2SeqModelOutput, _CONFIG_FOR_DOC
 )
 
-FLAX_T5_MODEL_DOCSTRING = """
+FLAX_Switch_MODEL_DOCSTRING = """
     Returns:
 
     Example::
 
-        >>> from transformers import T5Tokenizer, FlaxT5Model
+        >>> from transformers import SwitchTokenizer, FlaxSwitchModel
 
-        >>> tokenizer = T5Tokenizer.from_pretrained('t5-small')
-        >>> model = FlaxT5Model.from_pretrained('t5-small')
+        >>> tokenizer = SwitchTokenizer.from_pretrained('switch-small')
+        >>> model = FlaxSwitchModel.from_pretrained('switch-small')
 
         >>> input_ids = tokenizer("Studies have been shown that owning a dog is good for you", return_tensors="np").input_ids
         >>> decoder_input_ids = tokenizer("Studies show that", return_tensors="np").input_ids
@@ -1337,13 +1337,13 @@ FLAX_T5_MODEL_DOCSTRING = """
 """
 
 
-overwrite_call_docstring(FlaxT5Model, T5_INPUTS_DOCSTRING + FLAX_T5_MODEL_DOCSTRING)
-append_replace_return_docstrings(FlaxT5Model, output_type=FlaxSeq2SeqLMOutput, config_class=_CONFIG_FOR_DOC)
+overwrite_call_docstring(FlaxSwitchModel, Switch_INPUTS_DOCSTRING + FLAX_Switch_MODEL_DOCSTRING)
+append_replace_return_docstrings(FlaxSwitchModel, output_type=FlaxSeq2SeqLMOutput, config_class=_CONFIG_FOR_DOC)
 
 
-@add_start_docstrings("""T5 Model with a `language modeling` head on top. """, T5_START_DOCSTRING)
-class FlaxT5ForConditionalGenerationModule(nn.Module):
-    config: T5Config
+@add_start_docstrings("""Switch Model with a `language modeling` head on top. """, Switch_START_DOCSTRING)
+class FlaxSwitchForConditionalGenerationModule(nn.Module):
+    config: SwitchConfig
     dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def _get_encoder_module(self):
@@ -1365,13 +1365,13 @@ class FlaxT5ForConditionalGenerationModule(nn.Module):
         encoder_config.causal = False
         encoder_config.use_cache = False
         encoder_config.is_encoder_decoder = False
-        self.encoder = FlaxT5Stack(encoder_config, self.shared)
+        self.encoder = FlaxSwitchStack(encoder_config, self.shared)
 
         decoder_config = copy.deepcopy(self.config)
         decoder_config.causal = True
         decoder_config.is_encoder_decoder = False
         decoder_config.num_layers = self.config.num_decoder_layers
-        self.decoder = FlaxT5Stack(decoder_config, self.shared)
+        self.decoder = FlaxSwitchStack(decoder_config, self.shared)
 
         self.lm_head = nn.Dense(
             self.config.vocab_size,
@@ -1446,11 +1446,11 @@ class FlaxT5ForConditionalGenerationModule(nn.Module):
         )
 
 
-class FlaxT5ForConditionalGeneration(FlaxT5PreTrainedModel):
-    module_class = FlaxT5ForConditionalGenerationModule
+class FlaxSwitchForConditionalGeneration(FlaxSwitchPreTrainedModel):
+    module_class = FlaxSwitchForConditionalGenerationModule
 
-    @add_start_docstrings(T5_DECODE_INPUTS_DOCSTRING)
-    @replace_return_docstrings(output_type=FlaxCausalLMOutputWithCrossAttentions, config_class=T5Config)
+    @add_start_docstrings(Switch_DECODE_INPUTS_DOCSTRING)
+    @replace_return_docstrings(output_type=FlaxCausalLMOutputWithCrossAttentions, config_class=SwitchConfig)
     def decode(
         self,
         decoder_input_ids,
@@ -1470,11 +1470,11 @@ class FlaxT5ForConditionalGeneration(FlaxT5PreTrainedModel):
 
         Example::
 
-            >>> from transformers import T5Tokenizer, FlaxT5ForConditionalGeneration
+            >>> from transformers import SwitchTokenizer, FlaxSwitchForConditionalGeneration
             >>> import jax.numpy as jnp
 
-            >>> tokenizer = T5Tokenizer.from_pretrained('t5-small')
-            >>> model = FlaxT5ForConditionalGeneration.from_pretrained('t5-small')
+            >>> tokenizer = SwitchTokenizer.from_pretrained('switch-small')
+            >>> model = FlaxSwitchForConditionalGeneration.from_pretrained('switch-small')
 
             >>> text = "summarize: My friends are cool but they eat too many carbs."
             >>> inputs = tokenizer(text, return_tensors='np')
@@ -1510,7 +1510,7 @@ class FlaxT5ForConditionalGeneration(FlaxT5PreTrainedModel):
 
         # if past_key_values are passed then cache is already initialized a private flag init_cache has to be
         # passed down to ensure cache is used. It has to be made sure that cache is marked as mutable so that
-        # it can be changed by FlaxT5Attention module
+        # it can be changed by FlaxSwitchAttention module
         if past_key_values:
             inputs["cache"] = past_key_values
             mutable = ["cache"]
@@ -1613,15 +1613,15 @@ class FlaxT5ForConditionalGeneration(FlaxT5PreTrainedModel):
         return model_kwargs
 
 
-FLAX_T5_CONDITIONAL_GENERATION_DOCSTRING = """
+FLAX_Switch_CONDITIONAL_GENERATION_DOCSTRING = """
     Returns:
 
     Example::
 
-        >>> from transformers import T5Tokenizer, FlaxT5ForConditionalGeneration
+        >>> from transformers import SwitchTokenizer, FlaxSwitchForConditionalGeneration
 
-        >>> tokenizer = T5Tokenizer.from_pretrained('t5-small')
-        >>> model = FlaxT5ForConditionalGeneration.from_pretrained('t5-small')
+        >>> tokenizer = SwitchTokenizer.from_pretrained('switch-small')
+        >>> model = FlaxSwitchForConditionalGeneration.from_pretrained('switch-small')
 
         >>> ARTICLE_TO_SUMMARIZE = "summarize: My friends are cool but they eat too many carbs."
         >>> inputs = tokenizer([ARTICLE_TO_SUMMARIZE], return_tensors='np')
@@ -1633,8 +1633,8 @@ FLAX_T5_CONDITIONAL_GENERATION_DOCSTRING = """
 
 
 overwrite_call_docstring(
-    FlaxT5ForConditionalGeneration, T5_INPUTS_DOCSTRING + FLAX_T5_CONDITIONAL_GENERATION_DOCSTRING
+    FlaxSwitchForConditionalGeneration, Switch_INPUTS_DOCSTRING + FLAX_Switch_CONDITIONAL_GENERATION_DOCSTRING
 )
 append_replace_return_docstrings(
-    FlaxT5ForConditionalGeneration, output_type=FlaxSeq2SeqLMOutput, config_class=_CONFIG_FOR_DOC
+    FlaxSwitchForConditionalGeneration, output_type=FlaxSeq2SeqLMOutput, config_class=_CONFIG_FOR_DOC
 )

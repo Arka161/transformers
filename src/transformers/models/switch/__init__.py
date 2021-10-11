@@ -29,72 +29,72 @@ from ...file_utils import (
 
 
 _import_structure = {
-    "configuration_t5": ["T5_PRETRAINED_CONFIG_ARCHIVE_MAP", "T5Config", "T5OnnxConfig"],
+    "configuration_switch": ["Switch_PRETRAINED_CONFIG_ARCHIVE_MAP", "SwitchConfig", "SwitchOnnxConfig"],
 }
 
 if is_sentencepiece_available():
-    _import_structure["tokenization_t5"] = ["T5Tokenizer"]
+    _import_structure["tokenization_switch"] = ["SwitchTokenizer"]
 
 if is_tokenizers_available():
-    _import_structure["tokenization_t5_fast"] = ["T5TokenizerFast"]
+    _import_structure["tokenization_switch_fast"] = ["SwitchTokenizerFast"]
 
 if is_torch_available():
-    _import_structure["modeling_t5"] = [
-        "T5_PRETRAINED_MODEL_ARCHIVE_LIST",
-        "T5EncoderModel",
-        "T5ForConditionalGeneration",
-        "T5Model",
-        "T5PreTrainedModel",
-        "load_tf_weights_in_t5",
+    _import_structure["modeling_switch"] = [
+        "Switch_PRETRAINED_MODEL_ARCHIVE_LIST",
+        "SwitchEncoderModel",
+        "SwitchForConditionalGeneration",
+        "SwitchModel",
+        "SwitchPreTrainedModel",
+        "load_tf_weights_in_switch",
     ]
 
 if is_tf_available():
-    _import_structure["modeling_tf_t5"] = [
-        "TF_T5_PRETRAINED_MODEL_ARCHIVE_LIST",
-        "TFT5EncoderModel",
-        "TFT5ForConditionalGeneration",
-        "TFT5Model",
-        "TFT5PreTrainedModel",
+    _import_structure["modeling_tf_switch"] = [
+        "TF_Switch_PRETRAINED_MODEL_ARCHIVE_LIST",
+        "TFSwitchEncoderModel",
+        "TFSwitchForConditionalGeneration",
+        "TFSwitchModel",
+        "TFSwitchPreTrainedModel",
     ]
 
 if is_flax_available():
-    _import_structure["modeling_flax_t5"] = [
-        "FlaxT5ForConditionalGeneration",
-        "FlaxT5Model",
-        "FlaxT5PreTrainedModel",
+    _import_structure["modeling_flax_switch"] = [
+        "FlaxSwitchForConditionalGeneration",
+        "FlaxSwitchModel",
+        "FlaxSwitchPreTrainedModel",
     ]
 
 
 if TYPE_CHECKING:
-    from .configuration_t5 import T5_PRETRAINED_CONFIG_ARCHIVE_MAP, T5Config, T5OnnxConfig
+    from .configuration_switch import Switch_PRETRAINED_CONFIG_ARCHIVE_MAP, SwitchConfig, SwitchOnnxConfig
 
     if is_sentencepiece_available():
-        from .tokenization_t5 import T5Tokenizer
+        from .tokenization_switch import SwitchTokenizer
 
     if is_tokenizers_available():
-        from .tokenization_t5_fast import T5TokenizerFast
+        from .tokenization_switch_fast import SwitchTokenizerFast
 
     if is_torch_available():
-        from .modeling_t5 import (
-            T5_PRETRAINED_MODEL_ARCHIVE_LIST,
-            T5EncoderModel,
-            T5ForConditionalGeneration,
-            T5Model,
-            T5PreTrainedModel,
-            load_tf_weights_in_t5,
+        from .modeling_switch import (
+            Switch_PRETRAINED_MODEL_ARCHIVE_LIST,
+            SwitchEncoderModel,
+            SwitchForConditionalGeneration,
+            SwitchModel,
+            SwitchPreTrainedModel,
+            load_tf_weights_in_switch,
         )
 
     if is_tf_available():
-        from .modeling_tf_t5 import (
-            TF_T5_PRETRAINED_MODEL_ARCHIVE_LIST,
-            TFT5EncoderModel,
-            TFT5ForConditionalGeneration,
-            TFT5Model,
-            TFT5PreTrainedModel,
+        from .modeling_tf_switch import (
+            TF_Switch_PRETRAINED_MODEL_ARCHIVE_LIST,
+            TFSwitchEncoderModel,
+            TFSwitchForConditionalGeneration,
+            TFSwitchModel,
+            TFSwitchPreTrainedModel,
         )
 
     if is_flax_available():
-        from .modeling_flax_t5 import FlaxT5ForConditionalGeneration, FlaxT5Model, FlaxT5PreTrainedModel
+        from .modeling_flax_switch import FlaxSwitchForConditionalGeneration, FlaxSwitchModel, FlaxSwitchPreTrainedModel
 
 
 else:

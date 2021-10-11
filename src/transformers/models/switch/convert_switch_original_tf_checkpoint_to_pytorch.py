@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright 2018 The T5 authors and HuggingFace Inc. team.
+# Copyright 2018 The Switch authors and HuggingFace Inc. team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,12 +12,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Convert T5 checkpoint."""
+"""Convert Switch checkpoint."""
 
 
 import argparse
 
-from transformers import T5Config, T5ForConditionalGeneration, load_tf_weights_in_t5
+from transformers import SwitchConfig, SwitchForConditionalGeneration, load_tf_weights_in_switch
 from transformers.utils import logging
 
 
@@ -26,12 +26,12 @@ logging.set_verbosity_info()
 
 def convert_tf_checkpoint_to_pytorch(tf_checkpoint_path, config_file, pytorch_dump_path):
     # Initialise PyTorch model
-    config = T5Config.from_json_file(config_file)
+    config = SwitchConfig.from_json_file(config_file)
     print(f"Building PyTorch model from configuration: {config}")
-    model = T5ForConditionalGeneration(config)
+    model = SwitchForConditionalGeneration(config)
 
     # Load weights from tf checkpoint
-    load_tf_weights_in_t5(model, config, tf_checkpoint_path)
+    load_tf_weights_in_switch(model, config, tf_checkpoint_path)
 
     # Save pytorch-model
     print(f"Save PyTorch model to {pytorch_dump_path}")
@@ -49,7 +49,7 @@ if __name__ == "__main__":
         default=None,
         type=str,
         required=True,
-        help="The config json file corresponding to the pre-trained T5 model. \n"
+        help="The config json file corresponding to the pre-trained Switch model. \n"
         "This specifies the model architecture.",
     )
     parser.add_argument(
