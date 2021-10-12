@@ -33,10 +33,10 @@ _import_structure = {
 }
 
 if is_sentencepiece_available():
-    _import_structure["tokenization_switch"] = ["SwitchTokenizer"]
+    _import_structure["tokenization_t5"] = ["T5Tokenizer"]
 
 if is_tokenizers_available():
-    _import_structure["tokenization_switch_fast"] = ["SwitchTokenizerFast"]
+    _import_structure["tokenization_t5_fast"] = ["T5TokenizerFast"]
 
 if is_torch_available():
     _import_structure["modeling_switch"] = [
@@ -69,10 +69,10 @@ if TYPE_CHECKING:
     from .configuration_switch import Switch_PRETRAINED_CONFIG_ARCHIVE_MAP, SwitchConfig, SwitchOnnxConfig
 
     if is_sentencepiece_available():
-        from .tokenization_switch import SwitchTokenizer
+        from .tokenization_t5 import T5Tokenizer
 
     if is_tokenizers_available():
-        from .tokenization_switch_fast import SwitchTokenizerFast
+        from .tokenization_t5_fast import T5TokenizerFast
 
     if is_torch_available():
         from .modeling_switch import (

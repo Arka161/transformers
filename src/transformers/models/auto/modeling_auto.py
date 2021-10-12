@@ -54,6 +54,7 @@ MODEL_MAPPING_NAMES = OrderedDict(
         ("retribert", "RetriBertModel"),
         ("mt5", "MT5Model"),
         ("t5", "T5Model"),
+        ("switch", "SwitchModel"),
         ("pegasus", "PegasusModel"),
         ("marian", "MarianModel"),
         ("mbart", "MBartModel"),
@@ -285,6 +286,7 @@ MODEL_FOR_SEQ_TO_SEQ_CAUSAL_LM_MAPPING_NAMES = OrderedDict(
         ("led", "LEDForConditionalGeneration"),
         ("blenderbot-small", "BlenderbotSmallForConditionalGeneration"),
         ("mt5", "MT5ForConditionalGeneration"),
+        ("switch", "SwitchForConditionalGeneration")
         ("t5", "T5ForConditionalGeneration"),
         ("pegasus", "PegasusForConditionalGeneration"),
         ("marian", "MarianMTModel"),

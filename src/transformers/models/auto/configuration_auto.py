@@ -53,6 +53,7 @@ CONFIG_MAPPING_NAMES = OrderedDict(
         ("ibert", "IBertConfig"),
         ("mt5", "MT5Config"),
         ("t5", "T5Config"),
+        ("switch", "SwitchConfig"),
         ("mobilebert", "MobileBertConfig"),
         ("distilbert", "DistilBertConfig"),
         ("albert", "AlbertConfig"),
