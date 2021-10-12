@@ -1880,6 +1880,13 @@ class TFT5ForConditionalGeneration:
     def from_pretrained(cls, *args, **kwargs):
         requires_backends(cls, ["tf"])
 
+class TFSwitchForConditionalGeneration:
+    def __init__(self, *args, **kwargs):
+        requires_backends(self, ["tf"])
+
+    @classmethod
+    def from_pretrained(cls, *args, **kwargs):
+        requires_backends(cls, ["tf"])
 
 class TFT5Model:
     def __init__(self, *args, **kwargs):
