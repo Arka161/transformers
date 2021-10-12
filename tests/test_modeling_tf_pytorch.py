@@ -193,7 +193,7 @@ class TFPTAutoModelTest(unittest.TestCase):
 
     @slow
     def test_model_for_encoder_decoder_lm(self):
-        for model_name in TF_T5_PRETRAINED_MODEL_ARCHIVE_LIST[:1]:
+        for model_name in TF_Switch_PRETRAINED_MODEL_ARCHIVE_LIST[:1]:
             config = AutoConfig.from_pretrained(model_name)
             self.assertIsNotNone(config)
             self.assertIsInstance(config, SwitchConfig)
