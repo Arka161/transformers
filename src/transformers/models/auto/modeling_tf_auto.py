@@ -74,6 +74,7 @@ TF_MODEL_FOR_PRETRAINING_MAPPING_NAMES = OrderedDict(
         # Model for pre-training mapping
         ("lxmert", "TFLxmertForPreTraining"),
         ("t5", "TFT5ForConditionalGeneration"),
+        ("switch", "TFSwitchForConditionalGeneration"),
         ("distilbert", "TFDistilBertForMaskedLM"),
         ("albert", "TFAlbertForPreTraining"),
         ("bart", "TFBartForConditionalGeneration"),
@@ -104,6 +105,7 @@ TF_MODEL_WITH_LM_HEAD_MAPPING_NAMES = OrderedDict(
         ("convbert", "TFConvBertForMaskedLM"),
         ("led", "TFLEDForConditionalGeneration"),
         ("t5", "TFT5ForConditionalGeneration"),
+        ("switch", "TFSwitchForConditionalGeneration"),
         ("distilbert", "TFDistilBertForMaskedLM"),
         ("albert", "TFAlbertForMaskedLM"),
         ("marian", "TFMarianMTModel"),
@@ -175,6 +177,7 @@ TF_MODEL_FOR_SEQ_TO_SEQ_CAUSAL_LM_MAPPING_NAMES = OrderedDict(
         ("led", "TFLEDForConditionalGeneration"),
         ("mt5", "TFMT5ForConditionalGeneration"),
         ("t5", "TFT5ForConditionalGeneration"),
+        ("switch", "TFSwitchForConditionalGeneration"),
         ("marian", "TFMarianMTModel"),
         ("mbart", "TFMBartForConditionalGeneration"),
         ("pegasus", "TFPegasusForConditionalGeneration"),

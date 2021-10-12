@@ -26,6 +26,7 @@ if is_tf_available():
         BertConfig,
         GPT2Config,
         T5Config,
+        SwitchConfig,
         TFAutoModel,
         TFAutoModelForCausalLM,
         TFAutoModelForMaskedLM,
@@ -42,11 +43,12 @@ if is_tf_available():
         TFGPT2LMHeadModel,
         TFRobertaForMaskedLM,
         TFT5ForConditionalGeneration,
+        TFSwitchForConditionalGeneration,
     )
     from transformers.models.bert.modeling_tf_bert import TF_BERT_PRETRAINED_MODEL_ARCHIVE_LIST
     from transformers.models.gpt2.modeling_tf_gpt2 import TF_GPT2_PRETRAINED_MODEL_ARCHIVE_LIST
     from transformers.models.t5.modeling_tf_t5 import TF_T5_PRETRAINED_MODEL_ARCHIVE_LIST
-
+    from transformers.models.switch.modeling_tf_switch import TF_Switch_PRETRAINED_MODEL_ARCHIVE_LIST
 if is_torch_available():
     from transformers import (
         AutoModel,
@@ -65,6 +67,7 @@ if is_torch_available():
         GPT2LMHeadModel,
         RobertaForMaskedLM,
         T5ForConditionalGeneration,
+        SwitchForConditionalGeneration,
     )
 
 
@@ -187,6 +190,27 @@ class TFPTAutoModelTest(unittest.TestCase):
             )
             self.assertIsNotNone(model)
             self.assertIsInstance(model, T5ForConditionalGeneration)
+
+    @slow
+    def test_model_for_encoder_decoder_lm(self):
+        for model_name in TF_T5_PRETRAINED_MODEL_ARCHIVE_LIST[:1]:
+            config = AutoConfig.from_pretrained(model_name)
+            self.assertIsNotNone(config)
+            self.assertIsInstance(config, SwitchConfig)
+
+            model = TFAutoModelForSeq2SeqLM.from_pretrained(model_name, from_pt=True)
+            model, loading_info = TFAutoModelForSeq2SeqLM.from_pretrained(
+                model_name, output_loading_info=True, from_pt=True
+            )
+            self.assertIsNotNone(model)
+            self.assertIsInstance(model, TFSwitchForConditionalGeneration)
+
+            model = AutoModelForSeq2SeqLM.from_pretrained(model_name, from_tf=True)
+            model, loading_info = AutoModelForSeq2SeqLM.from_pretrained(
+                model_name, output_loading_info=True, from_tf=True
+            )
+            self.assertIsNotNone(model)
+            self.assertIsInstance(model, SwitchForConditionalGeneration)
 
     @slow
     def test_sequence_classification_model_from_pretrained(self):
