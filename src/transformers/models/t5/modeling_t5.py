@@ -339,6 +339,8 @@ class T5LayerFF(nn.Module):
         self.dropout = nn.Dropout(config.dropout_rate)
 
     def forward(self, hidden_states):
+        # Prototype code for Switch based on LabML
+
         # x = hidden_states
         # seq_len, batch_size, d_model = hidden_states.shape
         # x = x.view(-1, d_model)
@@ -399,10 +401,6 @@ class T5LayerFF(nn.Module):
         # # These are used for the load balancing loss and logging
 
         # return final_output, counts, route_prob.sum(0), len(dropped), route_prob_max
-        print(">>> HIDDEN STATES SHAPE", hidden_states.shape)
-        print("Added log")
-
-
         forwarded_states = self.layer_norm(hidden_states)
         forwarded_states = self.DenseReluDense(forwarded_states)
         hidden_states = hidden_states + self.dropout(forwarded_states)
