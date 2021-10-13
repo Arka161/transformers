@@ -23,6 +23,7 @@ from typing import Dict, List, Tuple
 
 from tokenizers import Regex, Tokenizer, decoders, normalizers, pre_tokenizers, processors
 from tokenizers.models import BPE, Unigram, WordPiece
+from transformers.models.switch.tokenization_switch import SwitchTokenizer
 
 from .file_utils import requires_backends
 
@@ -930,6 +931,7 @@ SLOW_TO_FAST_CONVERTERS = {
     "RoFormerTokenizer": RoFormerConverter,
     "SqueezeBertTokenizer": BertConverter,
     "T5Tokenizer": T5Converter,
+    "SwitchTokenizer": SwitchTokenizer,
     "XLMRobertaTokenizer": XLMRobertaConverter,
     "XLNetTokenizer": XLNetConverter,
     "SplinterTokenizer": SplinterConverter,
