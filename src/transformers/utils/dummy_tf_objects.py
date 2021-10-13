@@ -1879,9 +1879,17 @@ class TFRoFormerPreTrainedModel:
 
 
 TF_T5_PRETRAINED_MODEL_ARCHIVE_LIST = None
-
+TF_Switch_PRETRAINED_MODEL_ARCHIVE_LIST = None
 
 class TFT5EncoderModel:
+    def __init__(self, *args, **kwargs):
+        requires_backends(self, ["tf"])
+
+    @classmethod
+    def from_pretrained(cls, *args, **kwargs):
+        requires_backends(cls, ["tf"])
+
+class TFSwitchEncoderModel:
     def __init__(self, *args, **kwargs):
         requires_backends(self, ["tf"])
 
@@ -1898,6 +1906,13 @@ class TFT5ForConditionalGeneration:
     def from_pretrained(cls, *args, **kwargs):
         requires_backends(cls, ["tf"])
 
+class TFSwitchForConditionalGeneration:
+    def __init__(self, *args, **kwargs):
+        requires_backends(self, ["tf"])
+
+    @classmethod
+    def from_pretrained(cls, *args, **kwargs):
+        requires_backends(cls, ["tf"])
 
 class TFT5Model:
     def __init__(self, *args, **kwargs):
@@ -1907,8 +1922,23 @@ class TFT5Model:
     def from_pretrained(cls, *args, **kwargs):
         requires_backends(cls, ["tf"])
 
+class TFSwitchModel:
+    def __init__(self, *args, **kwargs):
+        requires_backends(self, ["tf"])
+
+    @classmethod
+    def from_pretrained(cls, *args, **kwargs):
+        requires_backends(cls, ["tf"])
 
 class TFT5PreTrainedModel:
+    def __init__(self, *args, **kwargs):
+        requires_backends(self, ["tf"])
+
+    @classmethod
+    def from_pretrained(cls, *args, **kwargs):
+        requires_backends(cls, ["tf"])
+
+class TFSwitchPreTrainedModel:
     def __init__(self, *args, **kwargs):
         requires_backends(self, ["tf"])
 

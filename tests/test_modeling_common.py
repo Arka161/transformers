@@ -67,6 +67,8 @@ if is_torch_available():
         PretrainedConfig,
         PreTrainedModel,
         T5Config,
+        SwitchConfig,
+        SwitchForConditionalGeneration,
         T5ForConditionalGeneration,
     )
 

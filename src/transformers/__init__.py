@@ -264,6 +264,7 @@ _import_structure = {
     "models.splinter": ["SPLINTER_PRETRAINED_CONFIG_ARCHIVE_MAP", "SplinterConfig", "SplinterTokenizer"],
     "models.squeezebert": ["SQUEEZEBERT_PRETRAINED_CONFIG_ARCHIVE_MAP", "SqueezeBertConfig", "SqueezeBertTokenizer"],
     "models.t5": ["T5_PRETRAINED_CONFIG_ARCHIVE_MAP", "T5Config"],
+    "models.switch": ["Switch_PRETRAINED_CONFIG_ARCHIVE_MAP", "SwitchConfig"],
     "models.tapas": ["TAPAS_PRETRAINED_CONFIG_ARCHIVE_MAP", "TapasConfig", "TapasTokenizer"],
     "models.transfo_xl": [
         "TRANSFO_XL_PRETRAINED_CONFIG_ARCHIVE_MAP",
@@ -355,6 +356,7 @@ if is_sentencepiece_available():
     _import_structure["models.rembert"].append("RemBertTokenizer")
     _import_structure["models.speech_to_text"].append("Speech2TextTokenizer")
     _import_structure["models.t5"].append("T5Tokenizer")
+    _import_structure["models.switch"].append("SwitchTokenizer")
     _import_structure["models.xlm_prophetnet"].append("XLMProphetNetTokenizer")
     _import_structure["models.xlm_roberta"].append("XLMRobertaTokenizer")
     _import_structure["models.xlnet"].append("XLNetTokenizer")
@@ -407,6 +409,7 @@ if is_tokenizers_available():
     _import_structure["models.splinter"].append("SplinterTokenizerFast")
     _import_structure["models.squeezebert"].append("SqueezeBertTokenizerFast")
     _import_structure["models.t5"].append("T5TokenizerFast")
+    _import_structure["models.switch"].append("SwitchTokenizerFast")
     _import_structure["models.xlm_roberta"].append("XLMRobertaTokenizerFast")
     _import_structure["models.xlnet"].append("XLNetTokenizerFast")
     _import_structure["tokenization_utils_fast"] = ["PreTrainedTokenizerFast"]
@@ -1151,6 +1154,17 @@ if is_torch_available():
             "load_tf_weights_in_t5",
         ]
     )
+
+    _import_structure["models.switch"].extend(
+        [
+            "Switch_PRETRAINED_MODEL_ARCHIVE_LIST",
+            "SwitchEncoderModel",
+            "SwitchForConditionalGeneration",
+            "SwitchModel",
+            "SwitchPreTrainedModel",
+            "load_tf_weights_in_switch",
+        ]
+    )
     _import_structure["models.tapas"].extend(
         [
             "TAPAS_PRETRAINED_MODEL_ARCHIVE_LIST",
@@ -1631,6 +1645,15 @@ if is_tf_available():
             "TFT5PreTrainedModel",
         ]
     )
+    _import_structure["models.switch"].extend(
+        [
+            "TF_Switch_PRETRAINED_MODEL_ARCHIVE_LIST",
+            "TFSwitchEncoderModel",
+            "TFSwitchForConditionalGeneration",
+            "TFSwitchModel",
+            "TFSwitchPreTrainedModel",
+        ]
+    )    
     _import_structure["models.transfo_xl"].extend(
         [
             "TF_TRANSFO_XL_PRETRAINED_MODEL_ARCHIVE_LIST",
@@ -2087,6 +2110,7 @@ if TYPE_CHECKING:
     from .models.splinter import SPLINTER_PRETRAINED_CONFIG_ARCHIVE_MAP, SplinterConfig, SplinterTokenizer
     from .models.squeezebert import SQUEEZEBERT_PRETRAINED_CONFIG_ARCHIVE_MAP, SqueezeBertConfig, SqueezeBertTokenizer
     from .models.t5 import T5_PRETRAINED_CONFIG_ARCHIVE_MAP, T5Config
+    from .models.switch import Switch_PRETRAINED_CONFIG_ARCHIVE_MAP, SwitchConfig
     from .models.tapas import TAPAS_PRETRAINED_CONFIG_ARCHIVE_MAP, TapasConfig, TapasTokenizer
     from .models.transfo_xl import (
         TRANSFO_XL_PRETRAINED_CONFIG_ARCHIVE_MAP,
@@ -2181,6 +2205,7 @@ if TYPE_CHECKING:
         from .models.rembert import RemBertTokenizer
         from .models.speech_to_text import Speech2TextTokenizer
         from .models.t5 import T5Tokenizer
+        from .models.switch import SwitchTokenizer
         from .models.xlm_prophetnet import XLMProphetNetTokenizer
         from .models.xlm_roberta import XLMRobertaTokenizer
         from .models.xlnet import XLNetTokenizer
@@ -2225,6 +2250,7 @@ if TYPE_CHECKING:
         from .models.splinter import SplinterTokenizerFast
         from .models.squeezebert import SqueezeBertTokenizerFast
         from .models.t5 import T5TokenizerFast
+        from .models.switch import SwitchTokenizerFast
         from .models.xlm_roberta import XLMRobertaTokenizerFast
         from .models.xlnet import XLNetTokenizerFast
         from .tokenization_utils_fast import PreTrainedTokenizerFast
@@ -2835,6 +2861,14 @@ if TYPE_CHECKING:
             T5PreTrainedModel,
             load_tf_weights_in_t5,
         )
+        from .models.switch import (
+            Switch_PRETRAINED_MODEL_ARCHIVE_LIST,
+            SwitchEncoderModel,
+            SwitchForConditionalGeneration,
+            SwitchModel,
+            SwitchPreTrainedModel,
+            load_tf_weights_in_switch,
+        )
         from .models.tapas import (
             TAPAS_PRETRAINED_MODEL_ARCHIVE_LIST,
             TapasForMaskedLM,
@@ -3236,6 +3270,13 @@ if TYPE_CHECKING:
             TFT5ForConditionalGeneration,
             TFT5Model,
             TFT5PreTrainedModel,
+        )
+        from .models.switch import (
+            TF_Switch_PRETRAINED_MODEL_ARCHIVE_LIST,
+            TFSwitchEncoderModel,
+            TFSwitchForConditionalGeneration,
+            TFSwitchModel,
+            TFSwitchPreTrainedModel,
         )
         from .models.transfo_xl import (
             TF_TRANSFO_XL_PRETRAINED_MODEL_ARCHIVE_LIST,

@@ -16,6 +16,7 @@
 import unittest
 
 from transformers import T5Config, is_tf_available
+from transformers import SwitchConfig, is_tf_available
 from transformers.file_utils import cached_property
 from transformers.testing_utils import require_sentencepiece, require_tf, require_tokenizers, slow
 

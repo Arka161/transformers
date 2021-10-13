@@ -3445,7 +3445,7 @@ class SqueezeBertPreTrainedModel:
 
 
 T5_PRETRAINED_MODEL_ARCHIVE_LIST = None
-
+Switch_PRETRAINED_MODEL_ARCHIVE_LIST = None
 
 class T5EncoderModel:
     def __init__(self, *args, **kwargs):
@@ -3455,6 +3455,13 @@ class T5EncoderModel:
     def from_pretrained(cls, *args, **kwargs):
         requires_backends(cls, ["torch"])
 
+class SwitchEncoderModel:
+    def __init__(self, *args, **kwargs):
+        requires_backends(self, ["torch"])
+
+    @classmethod
+    def from_pretrained(cls, *args, **kwargs):
+        requires_backends(cls, ["torch"])
 
 class T5ForConditionalGeneration:
     def __init__(self, *args, **kwargs):
@@ -3464,6 +3471,13 @@ class T5ForConditionalGeneration:
     def from_pretrained(cls, *args, **kwargs):
         requires_backends(cls, ["torch"])
 
+class SwitchForConditionalGeneration:
+    def __init__(self, *args, **kwargs):
+        requires_backends(self, ["torch"])
+
+    @classmethod
+    def from_pretrained(cls, *args, **kwargs):
+        requires_backends(cls, ["torch"])
 
 class T5Model:
     def __init__(self, *args, **kwargs):
@@ -3473,6 +3487,13 @@ class T5Model:
     def from_pretrained(cls, *args, **kwargs):
         requires_backends(cls, ["torch"])
 
+class SwitchModel:
+    def __init__(self, *args, **kwargs):
+        requires_backends(self, ["torch"])
+
+    @classmethod
+    def from_pretrained(cls, *args, **kwargs):
+        requires_backends(cls, ["torch"])
 
 class T5PreTrainedModel:
     def __init__(self, *args, **kwargs):
@@ -3482,9 +3503,19 @@ class T5PreTrainedModel:
     def from_pretrained(cls, *args, **kwargs):
         requires_backends(cls, ["torch"])
 
+class SwitchPreTrainedModel:
+    def __init__(self, *args, **kwargs):
+        requires_backends(self, ["torch"])
+
+    @classmethod
+    def from_pretrained(cls, *args, **kwargs):
+        requires_backends(cls, ["torch"])
 
 def load_tf_weights_in_t5(*args, **kwargs):
     requires_backends(load_tf_weights_in_t5, ["torch"])
+
+def load_tf_weights_in_switch(*args, **kwargs):
+    requires_backends(load_tf_weights_in_switch, ["torch"])
 
 
 TAPAS_PRETRAINED_MODEL_ARCHIVE_LIST = None

@@ -27,6 +27,7 @@ if is_tf_available():
         BertConfig,
         GPT2Config,
         T5Config,
+        SwitchConfig,
         TFAutoModel,
         TFAutoModelForCausalLM,
         TFAutoModelForMaskedLM,
@@ -45,6 +46,7 @@ if is_tf_available():
         TFGPT2LMHeadModel,
         TFRobertaForMaskedLM,
         TFT5ForConditionalGeneration,
+        TFSwitchForConditionalGeneration,
     )
     from transformers.models.auto.modeling_tf_auto import (
         TF_MODEL_FOR_CAUSAL_LM_MAPPING,
@@ -60,6 +62,7 @@ if is_tf_available():
     from transformers.models.bert.modeling_tf_bert import TF_BERT_PRETRAINED_MODEL_ARCHIVE_LIST
     from transformers.models.gpt2.modeling_tf_gpt2 import TF_GPT2_PRETRAINED_MODEL_ARCHIVE_LIST
     from transformers.models.t5.modeling_tf_t5 import TF_T5_PRETRAINED_MODEL_ARCHIVE_LIST
+    from transformers.models.switch.modeling_tf_switch import TF_Switch_PRETRAINED_MODEL_ARCHIVE_LIST
 
 
 @require_tf
@@ -143,6 +146,17 @@ class TFAutoModelTest(unittest.TestCase):
             self.assertIsNotNone(model)
             self.assertIsInstance(model, TFT5ForConditionalGeneration)
 
+    @slow
+    def test_model_for_encoder_decoder_lm(self):
+        for model_name in TF_Switch_PRETRAINED_MODEL_ARCHIVE_LIST[:1]:
+            config = AutoConfig.from_pretrained(model_name)
+            self.assertIsNotNone(config)
+            self.assertIsInstance(config, SwitchConfig)
+
+            model = TFAutoModelForSeq2SeqLM.from_pretrained(model_name)
+            model, loading_info = TFAutoModelForSeq2SeqLM.from_pretrained(model_name, output_loading_info=True)
+            self.assertIsNotNone(model)
+            self.assertIsInstance(model, TFSwitchForConditionalGeneration)
     @slow
     def test_sequence_classification_model_from_pretrained(self):
         # for model_name in TF_BERT_PRETRAINED_MODEL_ARCHIVE_LIST[:1]:

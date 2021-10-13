@@ -83,6 +83,7 @@ from . import (
     speech_to_text,
     splinter,
     squeezebert,
+    switch,
     t5,
     tapas,
     transfo_xl,
