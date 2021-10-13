@@ -27,11 +27,11 @@ from ...utils import logging
 logger = logging.get_logger(__name__)
 
 Switch_PRETRAINED_CONFIG_ARCHIVE_MAP = {
-    "switch-small": "https://huggingface.co/switch-small/resolve/main/config.json",
-    "switch-base": "https://huggingface.co/switch-base/resolve/main/config.json",
-    "switch-large": "https://huggingface.co/switch-large/resolve/main/config.json",
-    "switch-3b": "https://huggingface.co/switch-3b/resolve/main/config.json",
-    "switch-11b": "https://huggingface.co/switch-11b/resolve/main/config.json",
+    "switch-small": "https://huggingface.co/t5-small/resolve/main/config.json",
+    "switch-base": "https://huggingface.co/t5-base/resolve/main/config.json",
+    "switch-large": "https://huggingface.co/t5-large/resolve/main/config.json",
+    "switch-3b": "https://huggingface.co/t5-3b/resolve/main/config.json",
+    "switch-11b": "https://huggingface.co/t5-11b/resolve/main/config.json",
 }
 
 
