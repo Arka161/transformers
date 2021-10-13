@@ -318,7 +318,7 @@ def clone_module_list(module: M, n: int) -> TypedModuleList[M]:
     return TypedModuleList([copy.deepcopy(module) for _ in range(n)])
 
 class SwitchLayerFF(nn.Module):
-    def __init__(self, config, capacity_factor=None, drop_tokens=None, is_scale_prob=None, n_experts=None, expert=None, d_model=None):
+    def __init__(self, config, capacity_factor=None, drop_tokens=None, is_scale_prob=None, n_experts=None, expert=None):
         super().__init__()
         if config.feed_forward_proj == "relu":
             self.DenseReluDense = SwitchDenseReluDense(config)
@@ -403,7 +403,8 @@ class SwitchLayerFF(nn.Module):
         forwarded_states = self.layer_norm(hidden_states)
         forwarded_states = self.DenseReluDense(forwarded_states)
         hidden_states = hidden_states + self.dropout(forwarded_states)
-        return hidden_states
+        #counts, route_prob, n_dropped, route_prob_max
+        return hidden_states, None, None, None, None
 
 
 class SwitchAttention(nn.Module):
@@ -791,7 +792,8 @@ class SwitchBlock(nn.Module):
             attention_outputs = attention_outputs + cross_attention_outputs[2:]
 
         # Apply Feed Forward layer
-        hidden_states = self.layer[-1](hidden_states)
+        # counts, route_prob.sum(0), len(dropped), route_prob_max
+        hidden_states, counts, route_prob, n_dropped, route_prob_max = self.layer[-1](hidden_states)
 
         # clamp inf values to enable fp16 training
         if hidden_states.dtype == torch.float16 and torch.isinf(hidden_states).any():
@@ -804,8 +806,8 @@ class SwitchBlock(nn.Module):
             outputs = outputs + (present_key_value_state,) + attention_outputs
         else:
             outputs = outputs + attention_outputs
-
-        return outputs  # hidden-states, present_key_value_states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
+        # Return counts, route_prob, n_dropped, route_prob_max
+        return outputs, counts, route_prob, n_dropped, route_prob_max  # hidden-states, present_key_value_states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
 
 
 class SwitchPreTrainedModel(PreTrainedModel):
@@ -914,6 +916,8 @@ class SwitchStack(SwitchPreTrainedModel):
         self.block = nn.ModuleList(
             [SwitchBlock(config, has_relative_attention_bias=bool(i == 0)) for i in range(config.num_layers)]
         )
+        print(">>> Test Switch Block", [SwitchBlock(config, has_relative_attention_bias=bool(i == 0)) for i in range(1)])
+        print(">>> Error in SwitchStack", self.block)
         self.final_layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
 
@@ -1740,6 +1744,7 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
 
         loss = None
         if labels is not None:
+            # We require : counts, route_prob.sum(0), len(dropped), route_prob_max for load balancing loss
             loss_fct = CrossEntropyLoss(ignore_index=-100)
             loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
             # TODO(thom): Add z_loss https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/layers.py#L666
