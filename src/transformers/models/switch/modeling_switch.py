@@ -395,7 +395,7 @@ class SwitchLayerFF(nn.Module):
             final_output = final_output * route_prob_max.view(-1, 1)
         else:
             final_output = final_output * (route_prob_max / route_prob_max.detach()).view(-1, 1)
-        final_output = final_output.view(seq_len, batch_size, d_model)
+        #final_output = final_output.view(seq_len, batch_size, d_model)
 
         print(">>> switch final op shape", final_output)
         # indexes_list = [torch.eq(routes, i).nonzero(as_tuple=True)[0] for i in range(self.n_experts)]
