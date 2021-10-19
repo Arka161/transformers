@@ -359,9 +359,9 @@ class SwitchLayerFF(nn.Module):
         x = x.transpose_(0, 1)
         #print(">>> X current shape 2", x.shape)
         seq_len, batch_size, d_model = x.shape
-        # print(">>> Obtained seq_len", seq_len)
-        # print(">>> Obtained batch_size", batch_size)
-        # print(">>> Obtained d_model", d_model)
+        print(">>> Obtained seq_len", seq_len)
+        print(">>> Obtained batch_size", batch_size)
+        print(">>> Obtained d_model", d_model)
         
         
         route_prob = self.softmax(self.switch(x))
@@ -374,7 +374,7 @@ class SwitchLayerFF(nn.Module):
         indexes_list = [torch.eq(routes, i).nonzero(as_tuple=True)[0] for i in range(self.n_experts)]
 
         final_output = x.new_zeros(x.shape)
-
+        print(">>> Zeros Final OP shape", final_output.shape)
         capacity = int(self.capacity_factor * len(x) / self.n_experts)
         counts = x.new_tensor([len(indexes_list[i]) for i in range(self.n_experts)])
         dropped = []
@@ -386,6 +386,7 @@ class SwitchLayerFF(nn.Module):
                 dropped.append(indexes_list[i][capacity:])
                 indexes_list[i] = indexes_list[i][:capacity]
         expert_output = [self.experts[i](x[indexes_list[i], :]) for i in range(self.n_experts)]
+        print(">> expert out shape", expert_output.shape)
         for i in range(self.n_experts):
             final_output[indexes_list[i], :] = expert_output[i]
         if dropped:
