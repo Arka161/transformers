@@ -794,7 +794,10 @@ class SwitchBlock(nn.Module):
         # Apply Feed Forward layer
         # counts, route_prob.sum(0), len(dropped), route_prob_max
         hidden_states, counts, route_prob, n_dropped, route_prob_max = self.layer[-1](hidden_states)
-
+        self.counts = counts
+        self.route_prob = route_prob
+        self.n_dropped = n_dropped
+        self.route_prob_max = route_prob_max
         # clamp inf values to enable fp16 training
         if hidden_states.dtype == torch.float16 and torch.isinf(hidden_states).any():
             clamp_value = torch.finfo(hidden_states.dtype).max - 1000
@@ -808,8 +811,9 @@ class SwitchBlock(nn.Module):
             outputs = outputs + attention_outputs
         # Return counts, route_prob, n_dropped, route_prob_max
         print("This prints at the end of switch block")
-        return [outputs, counts, route_prob, n_dropped, route_prob_max]  # hidden-states, present_key_value_states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
-
+        return outputs  # hidden-states, present_key_value_states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
+    def extra_repr(self):
+        return [self.counts, self.route_prob, self.n_dropped, self.route_prob_max]
 
 class SwitchPreTrainedModel(PreTrainedModel):
     """
@@ -915,10 +919,10 @@ class SwitchStack(SwitchPreTrainedModel):
         self.is_decoder = config.is_decoder
 
         self.block = nn.ModuleList(
-            [SwitchBlock(config, has_relative_attention_bias=bool(i == 0))[0] for i in range(config.num_layers)]
+            [SwitchBlock(config, has_relative_attention_bias=bool(i == 0)) for i in range(config.num_layers)]
         )
         #print(">>> Test Switch Block", [SwitchBlock(config, has_relative_attention_bias=bool(i == 0)) for i in range(1)])
-        print(">>> Error in SwitchStack", self.block)
+        #print(">>> Error in SwitchStack", self.block)
         self.final_layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
 
