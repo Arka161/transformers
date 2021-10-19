@@ -335,7 +335,7 @@ class SwitchLayerFF(nn.Module):
         self.d_model = config.d_model
 
         # Used for routing
-        print("type of self.DenseReluDense", type(self.DenseReluDense))
+        #print("type of self.DenseReluDense", type(self.DenseReluDense))
         #self.experts = clone_module_list(self.DenseReluDense, n_experts)
 
         temp_l = []
@@ -354,22 +354,22 @@ class SwitchLayerFF(nn.Module):
         # x = hidden_states
     
         x = hidden_states.clone()
-        print(">>> X current shape 1", x.shape)
+        #print(">>> X current shape 1", x.shape)
         #x = x.view(-1, self.d_model)
         x = x.transpose_(0, 1)
-        print(">>> X current shape 2", x.shape)
+        #print(">>> X current shape 2", x.shape)
         seq_len, batch_size, d_model = x.shape
-        print(">>> Obtained seq_len", seq_len)
-        print(">>> Obtained batch_size", batch_size)
-        print(">>> Obtained d_model", d_model)
+        # print(">>> Obtained seq_len", seq_len)
+        # print(">>> Obtained batch_size", batch_size)
+        # print(">>> Obtained d_model", d_model)
         
         
         route_prob = self.softmax(self.switch(x))
         route_prob_max, routes = torch.max(route_prob, dim=-1)
         
-        print(">>> route_prob", route_prob)
-        print(">>> route_prob_max", route_prob_max)
-        print(">>> routes", routes)
+        # print(">>> route_prob", route_prob)
+        # print(">>> route_prob_max", route_prob_max)
+        # print(">>> routes", routes)
 
         indexes_list = [torch.eq(routes, i).nonzero(as_tuple=True)[0] for i in range(self.n_experts)]
 
@@ -388,6 +388,16 @@ class SwitchLayerFF(nn.Module):
         expert_output = [self.experts[i](x[indexes_list[i], :]) for i in range(self.n_experts)]
         for i in range(self.n_experts):
             final_output[indexes_list[i], :] = expert_output[i]
+        if dropped:
+            dropped = torch.cat(dropped)
+            final_output[dropped, :] = x[dropped, :]
+        if self.is_scale_prob:
+            final_output = final_output * route_prob_max.view(-1, 1)
+        else:
+            final_output = final_output * (route_prob_max / route_prob_max.detach()).view(-1, 1)
+        final_output = final_output.view(seq_len, batch_size, d_model)
+
+        print(">>> switch final op shape", final_output)
         # indexes_list = [torch.eq(routes, i).nonzero(as_tuple=True)[0] for i in range(self.n_experts)]
         # final_output = x.new_zeros(x.shape)
         # capacity = int(self.capacity_factor * len(x) / self.n_experts)
@@ -856,7 +866,7 @@ class SwitchBlock(nn.Module):
         else:
             outputs = outputs + attention_outputs
         # Return counts, route_prob, n_dropped, route_prob_max
-        print("This prints at the end of switch block")
+        #print("This prints at the end of switch block")
         return outputs  # hidden-states, present_key_value_states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
     def extra_repr(self):
         return [self.counts, self.route_prob, self.n_dropped, self.route_prob_max]
