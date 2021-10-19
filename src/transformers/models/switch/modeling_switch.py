@@ -807,7 +807,8 @@ class SwitchBlock(nn.Module):
         else:
             outputs = outputs + attention_outputs
         # Return counts, route_prob, n_dropped, route_prob_max
-        return outputs, counts, route_prob, n_dropped, route_prob_max  # hidden-states, present_key_value_states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
+        print("This prints at the end of switch block")
+        return [outputs, counts, route_prob, n_dropped, route_prob_max]  # hidden-states, present_key_value_states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
 
 
 class SwitchPreTrainedModel(PreTrainedModel):
@@ -914,9 +915,9 @@ class SwitchStack(SwitchPreTrainedModel):
         self.is_decoder = config.is_decoder
 
         self.block = nn.ModuleList(
-            [SwitchBlock(config, has_relative_attention_bias=bool(i == 0)) for i in range(config.num_layers)]
+            [SwitchBlock(config, has_relative_attention_bias=bool(i == 0))[0] for i in range(config.num_layers)]
         )
-        print(">>> Test Switch Block", [SwitchBlock(config, has_relative_attention_bias=bool(i == 0)) for i in range(1)])
+        #print(">>> Test Switch Block", [SwitchBlock(config, has_relative_attention_bias=bool(i == 0)) for i in range(1)])
         print(">>> Error in SwitchStack", self.block)
         self.final_layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
