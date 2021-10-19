@@ -334,6 +334,7 @@ class SwitchLayerFF(nn.Module):
         self.drop_tokens = drop_tokens
 
         # Used for routing
+        print("type of self.DenseReluDense", type(self.DenseReluDense))
         self.experts = clone_module_list(self.DenseReluDense, n_experts)
         self.switch = nn.Linear(config.d_model, n_experts)
 
