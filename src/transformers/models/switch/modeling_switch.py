@@ -339,7 +339,7 @@ class SwitchLayerFF(nn.Module):
         #self.experts = clone_module_list(self.DenseReluDense, n_experts)
 
         temp_l = []
-        for _ in range(n_experts):
+        for i in range(n_experts):
             temp_l.append(self.DenseReluDense)
         self.experts = nn.ModuleList(temp_l)
 
