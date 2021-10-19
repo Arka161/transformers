@@ -354,7 +354,9 @@ class SwitchLayerFF(nn.Module):
         # x = hidden_states
     
         x = hidden_states.clone()
+        print(">>> X current shape 1", x.shape)
         x = x.view(-1, self.d_model)
+        print(">>> X current shape 2", x.shape)
         seq_len, batch_size, d_model = x.shape
         print(">>> Obtained seq_len", seq_len)
         print(">>> Obtained batch_size", batch_size)
