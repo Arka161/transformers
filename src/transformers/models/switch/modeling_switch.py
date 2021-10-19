@@ -353,7 +353,7 @@ class SwitchLayerFF(nn.Module):
         # The following is prototype code for Switch taken from LabML
         # x = hidden_states
     
-        x = hidden_states.copy()
+        x = hidden_states.clone()
         x = x.view(-1, self.d_model)
         seq_len, batch_size, d_model = x.shape
         print(">>> Obtained seq_len", seq_len)
