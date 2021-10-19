@@ -328,10 +328,10 @@ class SwitchLayerFF(nn.Module):
             raise ValueError(
                 f"{self.config.feed_forward_proj} is not supported. Choose between `relu` and `gated-gelu`"
             )
-        self.capacity_factor = capacity_factor
-        self.is_scale_prob = is_scale_prob
-        self.n_experts = n_experts
-        self.drop_tokens = drop_tokens
+        self.capacity_factor = 10
+        self.is_scale_prob = True
+        self.n_experts = 2
+        self.drop_tokens = False
         self.d_model = config.d_model
 
         # Used for routing
@@ -343,10 +343,10 @@ class SwitchLayerFF(nn.Module):
             temp_l.append(self.DenseReluDense)
         self.experts = nn.ModuleList(temp_l)
 
-        self.switch = nn.Linear(self.d_model, n_experts)
+        self.switch = nn.Linear(self.d_model, 2)
 
-        # self.softmax = nn.Softmax(dim=-1)
-        self.layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
+        self.softmax = nn.Softmax(dim=-1)
+        self.layer_norm = SwitchLayerNorm(self.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
 
     def forward(self, hidden_states):
@@ -366,6 +366,7 @@ class SwitchLayerFF(nn.Module):
         
         print(">>> route_prob", route_prob)
         print(">>> route_prob_max", route_prob_max)
+        print(">>> routes", routes)
 
         # indexes_list = [torch.eq(routes, i).nonzero(as_tuple=True)[0] for i in range(self.n_experts)]
         # final_output = x.new_zeros(x.shape)
@@ -426,6 +427,8 @@ class SwitchLayerFF(nn.Module):
         forwarded_states = self.DenseReluDense(forwarded_states)
         hidden_states = hidden_states + self.dropout(forwarded_states)
         #counts, route_prob, n_dropped, route_prob_max
+
+        print(">>> Hidden_states expected shape", hidden_states)
         return hidden_states, None, None, None, None
 
 
