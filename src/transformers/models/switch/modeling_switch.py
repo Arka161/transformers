@@ -328,12 +328,15 @@ class SwitchLayerFF(nn.Module):
             raise ValueError(
                 f"{self.config.feed_forward_proj} is not supported. Choose between `relu` and `gated-gelu`"
             )
-        # self.capacity_factor = capacity_factor
-        # self.is_scale_prob = is_scale_prob
-        # self.n_experts = n_experts
-        # self.drop_tokens = drop_tokens
-        # self.experts = clone_module_list(expert, n_experts)
-        # self.switch = nn.Linear(d_model, n_experts)
+        self.capacity_factor = capacity_factor
+        self.is_scale_prob = is_scale_prob
+        self.n_experts = n_experts
+        self.drop_tokens = drop_tokens
+
+        # Used for routing
+        self.experts = clone_module_list(expert, n_experts)
+        self.switch = nn.Linear(config.d_model, n_experts)
+
         # self.softmax = nn.Softmax(dim=-1)
         self.layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
@@ -341,10 +344,18 @@ class SwitchLayerFF(nn.Module):
     def forward(self, hidden_states):
         # The following is prototype code for Switch taken from LabML
         # x = hidden_states
-        # seq_len, batch_size, d_model = hidden_states.shape
-        # x = x.view(-1, d_model)
-        # route_prob = self.softmax(self.switch(x))
-        # route_prob_max, routes = torch.max(route_prob, dim=-1)
+        seq_len, batch_size, d_model = hidden_states.shape
+        print(">>> Obtained seq_len", seq_len)
+        print(">>> Obtained batch_size", batch_size)
+        print(">>> Obtained d_model", d_model)
+        x = hidden_states.copy()
+        x = x.view(-1, d_model)
+        route_prob = self.softmax(self.switch(x))
+        route_prob_max, routes = torch.max(route_prob, dim=-1)
+        
+        print(">>> route_prob", route_prob)
+        print(">>> route_prob_max", route_prob_max)
+
         # indexes_list = [torch.eq(routes, i).nonzero(as_tuple=True)[0] for i in range(self.n_experts)]
         # final_output = x.new_zeros(x.shape)
         # capacity = int(self.capacity_factor * len(x) / self.n_experts)
@@ -532,7 +543,8 @@ class SwitchAttention(nn.Module):
         # Mask is (batch_size, key_length) (non-causal) or (batch_size, key_length, key_length)
         # past_key_value[0] is (batch_size, n_heads, q_len - 1, dim_per_head)
         batch_size, seq_length = hidden_states.shape[:2]
-
+        print(">>> Real bs", batch_size)
+        print(">>> Real seq_length", seq_length)
         real_seq_length = seq_length
 
         if past_key_value is not None:
