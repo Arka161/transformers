@@ -386,7 +386,8 @@ class SwitchLayerFF(nn.Module):
                 dropped.append(indexes_list[i][capacity:])
                 indexes_list[i] = indexes_list[i][:capacity]
         expert_output = [self.experts[i](x[indexes_list[i], :]) for i in range(self.n_experts)]
-        print(">> expert out shape", expert_output.shape)
+        print(">> indexes list shape", len(indexes_list))
+        print(">> expert out shape", len(expert_output))
         for i in range(self.n_experts):
             final_output[indexes_list[i], :] = expert_output[i]
         if dropped:
