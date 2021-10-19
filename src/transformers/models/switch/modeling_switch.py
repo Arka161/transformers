@@ -397,7 +397,7 @@ class SwitchLayerFF(nn.Module):
             final_output = final_output * (route_prob_max / route_prob_max.detach()).view(-1, 1)
         #final_output = final_output.view(seq_len, batch_size, d_model)
 
-        print(">>> switch final op shape", final_output)
+        print(">>> switch final op shape", final_output.shape)
         # indexes_list = [torch.eq(routes, i).nonzero(as_tuple=True)[0] for i in range(self.n_experts)]
         # final_output = x.new_zeros(x.shape)
         # capacity = int(self.capacity_factor * len(x) / self.n_experts)
@@ -458,7 +458,7 @@ class SwitchLayerFF(nn.Module):
         hidden_states = hidden_states + self.dropout(forwarded_states)
         #counts, route_prob, n_dropped, route_prob_max
 
-        print(">>> Hidden_states expected shape", hidden_states)
+        print(">>> Hidden_states expected shape", hidden_states.shape)
         return hidden_states, None, None, None, None
 
 
