@@ -371,6 +371,23 @@ class SwitchLayerFF(nn.Module):
         print(">>> route_prob_max", route_prob_max)
         print(">>> routes", routes)
 
+        indexes_list = [torch.eq(routes, i).nonzero(as_tuple=True)[0] for i in range(self.n_experts)]
+
+        final_output = x.new_zeros(x.shape)
+
+        capacity = int(self.capacity_factor * len(x) / self.n_experts)
+        counts = x.new_tensor([len(indexes_list[i]) for i in range(self.n_experts)])
+        dropped = []
+        if self.drop_tokens:
+            for i in range(self.n_experts):
+                if len(indexes_list[i]) <= capacity:
+                    continue
+                indexes_list[i] = indexes_list[i][torch.randperm(len(indexes_list[i]))]
+                dropped.append(indexes_list[i][capacity:])
+                indexes_list[i] = indexes_list[i][:capacity]
+        expert_output = [self.experts[i](x[indexes_list[i], :]) for i in range(self.n_experts)]
+        for i in range(self.n_experts):
+            final_output[indexes_list[i], :] = expert_output[i]
         # indexes_list = [torch.eq(routes, i).nonzero(as_tuple=True)[0] for i in range(self.n_experts)]
         # final_output = x.new_zeros(x.shape)
         # capacity = int(self.capacity_factor * len(x) / self.n_experts)
