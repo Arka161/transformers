@@ -332,11 +332,18 @@ class SwitchLayerFF(nn.Module):
         self.is_scale_prob = is_scale_prob
         self.n_experts = n_experts
         self.drop_tokens = drop_tokens
+        self.d_model = config.d_model
 
         # Used for routing
         print("type of self.DenseReluDense", type(self.DenseReluDense))
-        self.experts = clone_module_list(self.DenseReluDense, n_experts)
-        self.switch = nn.Linear(config.d_model, n_experts)
+        #self.experts = clone_module_list(self.DenseReluDense, n_experts)
+
+        temp_l = []
+        for _ in range(n_experts):
+            temp_l.append(self.DenseReluDense)
+        self.experts = nn.ModuleList(temp_l)
+
+        self.switch = nn.Linear(self.d_model, n_experts)
 
         # self.softmax = nn.Softmax(dim=-1)
         self.layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
@@ -345,12 +352,15 @@ class SwitchLayerFF(nn.Module):
     def forward(self, hidden_states):
         # The following is prototype code for Switch taken from LabML
         # x = hidden_states
-        seq_len, batch_size, d_model = hidden_states.shape
+    
+        x = hidden_states.copy()
+        x = x.view(-1, self.d_model)
+        seq_len, batch_size, d_model = x.shape
         print(">>> Obtained seq_len", seq_len)
         print(">>> Obtained batch_size", batch_size)
         print(">>> Obtained d_model", d_model)
-        x = hidden_states.copy()
-        x = x.view(-1, d_model)
+        
+        
         route_prob = self.softmax(self.switch(x))
         route_prob_max, routes = torch.max(route_prob, dim=-1)
         
