@@ -409,11 +409,12 @@ class SwitchLayerFF(nn.Module):
 
         print("route_prob_max shape", route_prob_max.shape)
         if self.is_scale_prob:
-            final_output = final_output * route_prob_max.view(-1, 1)
-        else:
-            final_output = final_output * (route_prob_max / route_prob_max.detach()).view(-1, 1)
-        #final_output = final_output.view(seq_len, batch_size, d_model)
+            # TO DO: Fix the shapes here
+            pass
+            #final_output = final_output * route_prob_max.view(-1, 1)
 
+        #final_output = final_output.view(seq_len, batch_size, d_model)
+        final_output = final_output.transpose_(0,1)
         print(">>> switch final op shape", final_output.shape)
         # indexes_list = [torch.eq(routes, i).nonzero(as_tuple=True)[0] for i in range(self.n_experts)]
         # final_output = x.new_zeros(x.shape)
