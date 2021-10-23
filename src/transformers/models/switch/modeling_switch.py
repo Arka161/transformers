@@ -389,11 +389,11 @@ class SwitchLayerFF(nn.Module):
         print(">> indexes list shape", len(indexes_list))
         print(">> expert out shape", len(expert_output))
         
-        print("indexes_list[0] shape", len(indexes_list[0]))
-        print("expert_output[0] shape", len(expert_output[0]))
+        print("indexes_list[0] shape", indexes_list[0].shape)
+        print("expert_output[0] shape", expert_output[0].shape)
 
-        print("FULL EXPERT OUTPUT 0", expert_output[0])
-
+        #print("FULL EXPERT OUTPUT 0", expert_output[0])
+        print("FULL index OUTPUT 0", indexes_list[0])
         for i in range(self.n_experts):
             final_output[indexes_list[i], :] = expert_output[i]
         if dropped:
