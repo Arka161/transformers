@@ -354,14 +354,7 @@ class SwitchLayerFF(nn.Module):
         # x = hidden_states
     
         x = hidden_states.clone()
-        #print(">>> X current shape 1", x.shape)
-        #x = x.view(-1, self.d_model)
         x = x.transpose_(0, 1)
-        #print(">>> X current shape 2", x.shape)
-        seq_len, batch_size, d_model = x.shape
-        print(">>> Obtained seq_len", seq_len)
-        print(">>> Obtained batch_size", batch_size)
-        print(">>> Obtained d_model", d_model)
         
         
         route_prob = self.softmax(self.switch(x))
@@ -386,28 +379,28 @@ class SwitchLayerFF(nn.Module):
                 dropped.append(indexes_list[i][capacity:])
                 indexes_list[i] = indexes_list[i][:capacity]
         expert_output = [self.experts[i](x[indexes_list[i], :]) for i in range(self.n_experts)]
-        print(">> indexes list shape", len(indexes_list))
-        print(">> expert out shape", len(expert_output))
+        # print(">> indexes list shape", len(indexes_list))
+        # print(">> expert out shape", len(expert_output))
         
-        print("indexes_list[0] shape", indexes_list[0].shape)
-        print("expert_output[0] shape", expert_output[0].shape)
+        # print("indexes_list[0] shape", indexes_list[0].shape)
+        # print("expert_output[0] shape", expert_output[0].shape)
 
-        #print("FULL EXPERT OUTPUT 0", expert_output[0])
-        print("FULL index OUTPUT 0", indexes_list[0])
-        print("Data type of index 0", type(indexes_list[0]))
-        print("shape of index 0", (indexes_list[0].shape))
+        # #print("FULL EXPERT OUTPUT 0", expert_output[0])
+        # print("FULL index OUTPUT 0", indexes_list[0])
+        # print("Data type of index 0", type(indexes_list[0]))
+        # print("shape of index 0", (indexes_list[0].shape))
 
-        print("shape of expert 0", (expert_output[0].shape))
-        print("data type of expert 0", type(expert_output[0]))
+        # print("shape of expert 0", (expert_output[0].shape))
+        #print("data type of expert 0", type(expert_output[0]))
 
         for i in range(self.n_experts):
             final_output[indexes_list[i], :] = expert_output[i]
-        print("final_output shape after looping", final_output.shape)
+        #print("final_output shape after looping", final_output.shape)
         if dropped:
             dropped = torch.cat(dropped)
             final_output[dropped, :] = x[dropped, :]
 
-        print("route_prob_max shape", route_prob_max.shape)
+        #print("route_prob_max shape", route_prob_max.shape)
         if self.is_scale_prob:
             # TO DO: Fix the shapes here
             pass
@@ -415,7 +408,7 @@ class SwitchLayerFF(nn.Module):
 
         #final_output = final_output.view(seq_len, batch_size, d_model)
         final_output = final_output.transpose_(0,1)
-        print(">>> switch final op shape", final_output.shape)
+        #print(">>> switch final op shape", final_output.shape)
         # indexes_list = [torch.eq(routes, i).nonzero(as_tuple=True)[0] for i in range(self.n_experts)]
         # final_output = x.new_zeros(x.shape)
         # capacity = int(self.capacity_factor * len(x) / self.n_experts)
@@ -471,13 +464,13 @@ class SwitchLayerFF(nn.Module):
         # # These are used for the load balancing loss and logging
 
         # return final_output, counts, route_prob.sum(0), len(dropped), route_prob_max
-        forwarded_states = self.layer_norm(hidden_states)
-        forwarded_states = self.DenseReluDense(forwarded_states)
-        hidden_states = hidden_states + self.dropout(forwarded_states)
+        #forwarded_states = self.layer_norm(hidden_states)
+        #forwarded_states = self.DenseReluDense(forwarded_states)
+        #hidden_states = hidden_states + self.dropout(forwarded_states)
         #counts, route_prob, n_dropped, route_prob_max
 
-        print(">>> Hidden_states expected shape", hidden_states.shape)
-        return hidden_states, None, None, None, None
+        #print(">>> Hidden_states expected shape", hidden_states.shape)
+        return final_output, None, None, None, None
 
 
 class SwitchAttention(nn.Module):
