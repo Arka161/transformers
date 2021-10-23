@@ -406,6 +406,8 @@ class SwitchLayerFF(nn.Module):
         if dropped:
             dropped = torch.cat(dropped)
             final_output[dropped, :] = x[dropped, :]
+
+        print("route_prob_max shape", route_prob_max.shape)
         if self.is_scale_prob:
             final_output = final_output * route_prob_max.view(-1, 1)
         else:
