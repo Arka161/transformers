@@ -402,6 +402,7 @@ class SwitchLayerFF(nn.Module):
 
         for i in range(self.n_experts):
             final_output[indexes_list[i], :] = expert_output[i]
+        print("final_output shape after looping", final_output.shape)
         if dropped:
             dropped = torch.cat(dropped)
             final_output[dropped, :] = x[dropped, :]
