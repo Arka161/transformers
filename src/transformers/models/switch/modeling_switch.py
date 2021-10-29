@@ -367,7 +367,7 @@ class SwitchLayerFF(nn.Module):
         indexes_list = [torch.eq(routes, i).nonzero(as_tuple=True)[0] for i in range(self.n_experts)]
 
         final_output = x.new_zeros(x.shape)
-        print(">>> Zeros Final OP shape", final_output.shape)
+        # print(">>> Zeros Final OP shape", final_output.shape)
         capacity = int(self.capacity_factor * len(x) / self.n_experts)
         counts = x.new_tensor([len(indexes_list[i]) for i in range(self.n_experts)])
         dropped = []
@@ -379,19 +379,6 @@ class SwitchLayerFF(nn.Module):
                 dropped.append(indexes_list[i][capacity:])
                 indexes_list[i] = indexes_list[i][:capacity]
         expert_output = [self.experts[i](x[indexes_list[i], :]) for i in range(self.n_experts)]
-        # print(">> indexes list shape", len(indexes_list))
-        # print(">> expert out shape", len(expert_output))
-        
-        # print("indexes_list[0] shape", indexes_list[0].shape)
-        # print("expert_output[0] shape", expert_output[0].shape)
-
-        # #print("FULL EXPERT OUTPUT 0", expert_output[0])
-        # print("FULL index OUTPUT 0", indexes_list[0])
-        # print("Data type of index 0", type(indexes_list[0]))
-        # print("shape of index 0", (indexes_list[0].shape))
-
-        # print("shape of expert 0", (expert_output[0].shape))
-        #print("data type of expert 0", type(expert_output[0]))
 
         for i in range(self.n_experts):
             final_output[indexes_list[i], :] = expert_output[i]
@@ -404,73 +391,10 @@ class SwitchLayerFF(nn.Module):
         if self.is_scale_prob:
             # TO DO: Fix the shapes here
             pass
-            #final_output = final_output * route_prob_max.view(-1, 1)
 
-        #final_output = final_output.view(seq_len, batch_size, d_model)
         final_output = final_output.transpose_(0,1)
-        #print(">>> switch final op shape", final_output.shape)
-        # indexes_list = [torch.eq(routes, i).nonzero(as_tuple=True)[0] for i in range(self.n_experts)]
-        # final_output = x.new_zeros(x.shape)
-        # capacity = int(self.capacity_factor * len(x) / self.n_experts)
-
-
-        # counts = x.new_tensor([len(indexes_list[i]) for i in range(self.n_experts)])
-
-        # # Initialize an empty list of dropped tokens
-        # dropped = []
-        # # Only drop tokens if `drop_tokens` is `True`.
-        # if self.drop_tokens:
-        #     # Drop tokens in each of the experts
-        #     for i in range(self.n_experts):
-        #         # Ignore if the expert is not over capacity
-        #         if len(indexes_list[i]) <= capacity:
-        #             continue
-        #         # Shuffle indexes before dropping
-        #         indexes_list[i] = indexes_list[i][torch.randperm(len(indexes_list[i]))]
-        #         # Collect the tokens over capacity as dropped tokens
-        #         dropped.append(indexes_list[i][capacity:])
-        #         # Keep only the tokens upto the capacity of the expert
-        #         indexes_list[i] = indexes_list[i][:capacity]
-
-        # # Get outputs of the expert FFNs
-        # expert_output = [self.experts[i](x[indexes_list[i], :]) for i in range(self.n_experts)]
-
-        #         # Assign to final output
-        # for i in range(self.n_experts):
-        #     final_output[indexes_list[i], :] = expert_output[i]
-
-        # # Pass through the dropped tokens
-        # if dropped:
-        #     dropped = torch.cat(dropped)
-        #     final_output[dropped, :] = x[dropped, :]
-
-        # if self.is_scale_prob:
-        #     # Multiply by the expert outputs by the probabilities $y = p_i(x) E_i(x)$
-        #     final_output = final_output * route_prob_max.view(-1, 1)
-        # else:
-        #     # Don't scale the values but multiply by $\frac{p}{\hat{p}} = 1$ so that the gradients flow
-        #     # (this is something we experimented with).
-        #     final_output = final_output * (route_prob_max / route_prob_max.detach()).view(-1, 1)
-
-        # # Change the shape of the final output back to `[seq_len, batch_size, d_model]`
-        # final_output = final_output.view(seq_len, batch_size, d_model)
-
-        # # Return
-        # # * the final output
-        # # * number of tokens routed to each expert
-        # # * sum of probabilities for each expert
-        # # * number of tokens dropped.
-        # # * routing probabilities of the selected experts
-        # # These are used for the load balancing loss and logging
-
-        # return final_output, counts, route_prob.sum(0), len(dropped), route_prob_max
-        #forwarded_states = self.layer_norm(hidden_states)
-        #forwarded_states = self.DenseReluDense(forwarded_states)
-        #hidden_states = hidden_states + self.dropout(forwarded_states)
-        #counts, route_prob, n_dropped, route_prob_max
-
-        #print(">>> Hidden_states expected shape", hidden_states.shape)
-        return final_output, None, None, None, None
+        # counts, route_prob.sum(0), len(dropped), route_prob_max
+        return final_output, counts, route_prob.sum(0), len(dropped), route_prob_max
 
 
 class SwitchAttention(nn.Module):
@@ -989,14 +913,15 @@ class SwitchStack(SwitchPreTrainedModel):
         #    [SwitchBlock(config, has_relative_attention_bias=bool(i == 0)) for i in range(config.num_layers)]
         #)
         list_m = []
+        list_load_params = []
         for i in range(config.num_layers):
             block = SwitchBlock(config, has_relative_attention_bias=bool(i == 0))
             list_m.append(block)
-
+            list_load_params.append(block.extra_repr())
+        #list_load_params = torch.tensor(list_load_params)
         self.block = nn.ModuleList(list_m)
+        self.list_load_params = list_load_params
 
-        #print(">>> Test Switch Block", [SwitchBlock(config, has_relative_attention_bias=bool(i == 0)) for i in range(1)])
-        #print(">>> Error in SwitchStack", self.block)
         self.final_layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
 
@@ -1005,6 +930,9 @@ class SwitchStack(SwitchPreTrainedModel):
         self.model_parallel = False
         self.device_map = None
         self.gradient_checkpointing = False
+
+    def extra_repr(self):
+        return self.list_load_params
 
     @add_start_docstrings(PARALLELIZE_DOCSTRING)
     def parallelize(self, device_map=None):
@@ -1609,6 +1537,7 @@ class SwitchModel(SwitchPreTrainedModel):
             encoder_last_hidden_state=encoder_outputs.last_hidden_state,
             encoder_hidden_states=encoder_outputs.hidden_states,
             encoder_attentions=encoder_outputs.attentions,
+            switch_outputs=[1,2,3],
         )
 
 
