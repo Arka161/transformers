@@ -802,6 +802,7 @@ class SwitchBlock(nn.Module):
             outputs = outputs + attention_outputs
         # Return counts, route_prob, n_dropped, route_prob_max
         #print("This prints at the end of switch block")
+        print("Outputs given here as", outputs)
         return outputs  # hidden-states, present_key_value_states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
     def extra_repr(self):
         return [self.counts, self.route_prob, self.n_dropped, self.route_prob_max]
@@ -916,6 +917,7 @@ class SwitchStack(SwitchPreTrainedModel):
         list_load_params = []
         for i in range(config.num_layers):
             block = SwitchBlock(config, has_relative_attention_bias=bool(i == 0))
+            print("block output in switch stack")
             list_m.append(block)
             list_load_params.append(block.extra_repr())
         #list_load_params = torch.tensor(list_load_params)
