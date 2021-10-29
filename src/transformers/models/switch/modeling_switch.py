@@ -914,15 +914,14 @@ class SwitchStack(SwitchPreTrainedModel):
         #    [SwitchBlock(config, has_relative_attention_bias=bool(i == 0)) for i in range(config.num_layers)]
         #)
         list_m = []
-        list_load_params = []
+        self.list_load_params = []
         for i in range(config.num_layers):
             block = SwitchBlock(config, has_relative_attention_bias=bool(i == 0))
-            print("block output in switch stack")
+            #print("block output in switch stack", block)
             list_m.append(block)
-            list_load_params.append(block.extra_repr())
+            
         #list_load_params = torch.tensor(list_load_params)
         self.block = nn.ModuleList(list_m)
-        self.list_load_params = list_load_params
 
         self.final_layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
@@ -1115,6 +1114,8 @@ class SwitchStack(SwitchPreTrainedModel):
                     cross_attn_layer_head_mask,
                     None,  # past_key_value is always None with gradient checkpointing
                 )
+                
+                self.list_load_params.append(layer_module.extra_repr())
             else:
                 layer_outputs = layer_module(
                     hidden_states,
@@ -1129,6 +1130,7 @@ class SwitchStack(SwitchPreTrainedModel):
                     use_cache=use_cache,
                     output_attentions=output_attentions,
                 )
+                self.list_load_params.append(layer_module.extra_repr())
 
             # layer_outputs is a tuple with:
             # hidden-states, key-value-states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
