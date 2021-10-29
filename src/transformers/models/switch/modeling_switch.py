@@ -1696,6 +1696,7 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict,
             )
+            switch_output = self.encoder.extra_repr()
         elif return_dict and not isinstance(encoder_outputs, BaseModelOutput):
             encoder_outputs = BaseModelOutput(
                 last_hidden_state=encoder_outputs[0],
@@ -1759,7 +1760,7 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
             # We require : counts, route_prob.sum(0), len(dropped), route_prob_max for load balancing loss
             loss_fct = CrossEntropyLoss(ignore_index=-100)
             loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
-            print("Switch Loss shape", loss.shape)
+            #print("Switch Loss shape", loss.shape)
             # TODO(thom): Add z_loss https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/layers.py#L666
 
         if not return_dict:
@@ -1769,6 +1770,7 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
         return Seq2SeqLMOutput(
             loss=loss,
             logits=lm_logits,
+            switch_output=switch_output,
             past_key_values=decoder_outputs.past_key_values,
             decoder_hidden_states=decoder_outputs.hidden_states,
             decoder_attentions=decoder_outputs.attentions,
