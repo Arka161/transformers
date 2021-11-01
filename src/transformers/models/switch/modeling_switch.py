@@ -337,11 +337,7 @@ class SwitchLayerFF(nn.Module):
         # Used for routing
         #print("type of self.DenseReluDense", type(self.DenseReluDense))
         #self.experts = clone_module_list(self.DenseReluDense, n_experts)
-
-        temp_l = []
-        for _ in range(2):
-            temp_l.append(self.DenseReluDense)
-        self.experts = nn.ModuleList(temp_l)
+        self.experts = nn.ModuleList([self.DenseReluDense] * self.n_experts)
 
         self.switch = nn.Linear(self.d_model, 2)
 
@@ -352,11 +348,17 @@ class SwitchLayerFF(nn.Module):
     def forward(self, hidden_states):
         # The following is prototype code for Switch taken from LabML
         # x = hidden_states
-    
+        # TODO support mixed precision (gates should be float32)
+        # TODO add torch distributed
+        # TODO add support for more than 2 experts
+
         x = hidden_states.clone()
         x = x.transpose_(0, 1)
-        
-        
+        # TODO: add input jitter
+        # if train and policy == "input_jitter":
+        #     gate_inputs = mtf.layers.multiplicative_jitter(
+        #         gate_inputs, hparams.moe_switch_jitter)
+
         route_prob = self.softmax(self.switch(x))
         route_prob_max, routes = torch.max(route_prob, dim=-1)
         
@@ -364,6 +366,8 @@ class SwitchLayerFF(nn.Module):
         # print(">>> route_prob_max", route_prob_max)
         # print(">>> routes", routes)
 
+        # TODO rewrite as mask (non-zero is super slow)
+        # expert_mask = mtf.one_hot(expert_index, experts_dim, dtype=raw_gates.dtype)
         indexes_list = [torch.eq(routes, i).nonzero(as_tuple=True)[0] for i in range(self.n_experts)]
 
         final_output = x.new_zeros(x.shape)
@@ -522,8 +526,8 @@ class SwitchAttention(nn.Module):
         # Mask is (batch_size, key_length) (non-causal) or (batch_size, key_length, key_length)
         # past_key_value[0] is (batch_size, n_heads, q_len - 1, dim_per_head)
         batch_size, seq_length = hidden_states.shape[:2]
-        print(">>> Real bs", batch_size)
-        print(">>> Real seq_length", seq_length)
+        # print(">>> Real bs", batch_size)
+        # print(">>> Real seq_length", seq_length)
         real_seq_length = seq_length
 
         if past_key_value is not None:
@@ -802,7 +806,7 @@ class SwitchBlock(nn.Module):
             outputs = outputs + attention_outputs
         # Return counts, route_prob, n_dropped, route_prob_max
         #print("This prints at the end of switch block")
-        print("Outputs given here as", outputs)
+        # print("Outputs given here as", outputs)
         return outputs  # hidden-states, present_key_value_states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
     def extra_repr(self):
         return [self.counts, self.route_prob, self.n_dropped, self.route_prob_max]
@@ -1758,6 +1762,7 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
         loss = None
         if labels is not None:
             # We require : counts, route_prob.sum(0), len(dropped), route_prob_max for load balancing loss
+            # TODO add load balancing loss
             loss_fct = CrossEntropyLoss(ignore_index=-100)
             loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
             #print("Switch Loss shape", loss.shape)
