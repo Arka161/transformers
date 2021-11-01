@@ -22,6 +22,7 @@ import warnings
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 from typing import Any, TypeVar, Iterator, Iterable, Generic
 from torch.nn import CrossEntropyLoss
 from torch.utils.checkpoint import checkpoint
@@ -318,8 +319,9 @@ def clone_module_list(module: M, n: int) -> TypedModuleList[M]:
     return TypedModuleList([copy.deepcopy(module) for _ in range(n)])
 
 class SwitchLayerFF(nn.Module):
-    def __init__(self, config, capacity_factor=None, drop_tokens=None, is_scale_prob=None, n_experts=None, expert=None):
+    def __init__(self, config, capacity_factor=10, drop_tokens=False, is_scale_prob=True, n_experts=2, expert=None):
         super().__init__()
+        self.epsilon = 1e-6
         if config.feed_forward_proj == "relu":
             self.DenseReluDense = SwitchDenseReluDense(config)
         elif config.feed_forward_proj == "gated-gelu":
@@ -328,52 +330,49 @@ class SwitchLayerFF(nn.Module):
             raise ValueError(
                 f"{self.config.feed_forward_proj} is not supported. Choose between `relu` and `gated-gelu`"
             )
-        self.capacity_factor = 10
-        self.is_scale_prob = True
-        self.n_experts = 2
-        self.drop_tokens = False
+        self.capacity_factor = capacity_factor
+        self.is_scale_prob = is_scale_prob
+        self.n_experts = n_experts
+        self.drop_tokens = drop_tokens
         self.d_model = config.d_model
 
         # Used for routing
-        #print("type of self.DenseReluDense", type(self.DenseReluDense))
-        #self.experts = clone_module_list(self.DenseReluDense, n_experts)
         self.experts = nn.ModuleList([self.DenseReluDense] * self.n_experts)
-
-        self.switch = nn.Linear(self.d_model, 2)
-
+        self.router = nn.Linear(self.d_model, self.n_experts)
         self.softmax = nn.Softmax(dim=-1)
         self.layer_norm = SwitchLayerNorm(self.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
 
     def forward(self, hidden_states):
-        # The following is prototype code for Switch taken from LabML
-        # x = hidden_states
         # TODO support mixed precision (gates should be float32)
         # TODO add torch distributed
         # TODO add support for more than 2 experts
+        # TODO: Add XM calls for parallelism on a single tpu
 
+        # input shape: batch_size, d_model, seq_len
         x = hidden_states.clone()
+        # New shape: d_model, batch_size, seq_len
         x = x.transpose_(0, 1)
-        # TODO: add input jitter
-        # if train and policy == "input_jitter":
-        #     gate_inputs = mtf.layers.multiplicative_jitter(
-        #         gate_inputs, hparams.moe_switch_jitter)
 
-        route_prob = self.softmax(self.switch(x))
-        route_prob_max, routes = torch.max(route_prob, dim=-1)
-        
-        # print(">>> route_prob", route_prob)
-        # print(">>> route_prob_max", route_prob_max)
-        # print(">>> routes", routes)
+        gate_inputs = x.to(torch.float32)
+        # input jitter
+
+        gate_inputs = gate_inputs * torch.FloatTensor(gate_inputs.shape).uniform_(1 - self.epsilon,  1 + self.epsilon)
+        raw_gates = self.router(gate_inputs)
+        gate_logits = self.softmax(raw_gates)
+
+        # Map tokens to their experts
+        expert_gate, expert_index = torch.topk(gate_logits, 1, dim=-1)
 
         # TODO rewrite as mask (non-zero is super slow)
-        # expert_mask = mtf.one_hot(expert_index, experts_dim, dtype=raw_gates.dtype)
-        indexes_list = [torch.eq(routes, i).nonzero(as_tuple=True)[0] for i in range(self.n_experts)]
-
+        expert_mask = F.one_hot(expert_index, self.n_experts)
+        # breakpoint()
+        indexes_list = [torch.eq(expert_index, i).nonzero(as_tuple=True)[0] for i in range(self.n_experts)]
         final_output = x.new_zeros(x.shape)
-        # print(">>> Zeros Final OP shape", final_output.shape)
         capacity = int(self.capacity_factor * len(x) / self.n_experts)
         counts = x.new_tensor([len(indexes_list[i]) for i in range(self.n_experts)])
+
+        # TODO Check MTF implementation of drop token handling
         dropped = []
         if self.drop_tokens:
             for i in range(self.n_experts):
@@ -382,10 +381,13 @@ class SwitchLayerFF(nn.Module):
                 indexes_list[i] = indexes_list[i][torch.randperm(len(indexes_list[i]))]
                 dropped.append(indexes_list[i][capacity:])
                 indexes_list[i] = indexes_list[i][:capacity]
+
+        # TODO: Change to parallel (look at distributed)
         expert_output = [self.experts[i](x[indexes_list[i], :]) for i in range(self.n_experts)]
 
         for i in range(self.n_experts):
             final_output[indexes_list[i], :] = expert_output[i]
+
         #print("final_output shape after looping", final_output.shape)
         if dropped:
             dropped = torch.cat(dropped)
@@ -398,7 +400,7 @@ class SwitchLayerFF(nn.Module):
 
         final_output = final_output.transpose_(0,1)
         # counts, route_prob.sum(0), len(dropped), route_prob_max
-        return final_output, counts, route_prob.sum(0), len(dropped), route_prob_max
+        return final_output, counts, expert_gate.sum(0), len(dropped), expert_index
 
 
 class SwitchAttention(nn.Module):
@@ -700,7 +702,6 @@ class SwitchBlock(nn.Module):
         self.layer.append(SwitchLayerSelfAttention(config, has_relative_attention_bias=has_relative_attention_bias))
         if self.is_decoder:
             self.layer.append(SwitchLayerCrossAttention(config))
-
         self.layer.append(SwitchLayerFF(config))
 
     def forward(
