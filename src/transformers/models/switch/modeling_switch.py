@@ -922,10 +922,8 @@ class SwitchStack(SwitchPreTrainedModel):
         self.list_load_params = []
         for i in range(config.num_layers):
             block = SwitchBlock(config, has_relative_attention_bias=bool(i == 0))
-            #print("block output in switch stack", block)
             list_m.append(block)
             
-        #list_load_params = torch.tensor(list_load_params)
         self.block = nn.ModuleList(list_m)
 
         self.final_layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
@@ -1566,7 +1564,7 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
         self.model_dim = config.d_model
 
         self.shared = nn.Embedding(config.vocab_size, config.d_model)
-
+        self.vocab_dim = config.vocab_size
         encoder_config = copy.deepcopy(config)
         encoder_config.is_decoder = False
         encoder_config.use_cache = False
@@ -1767,6 +1765,15 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
             loss_fct = CrossEntropyLoss(ignore_index=-100)
             loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
             #print("Switch Loss shape", loss.shape)
+            print(">> Before Z Loss")
+            vocab_dim = self.vocab_dim
+            print(">>> component 1 shape", lm_logits.view(-1, lm_logits.size(-1)).shape)
+            print(">>> Component 2 vocab_di,", vocab_dim)
+            log_z = torch.logsumexp(lm_logits.view(-1, lm_logits.size(-1)), vocab_dim)
+            print(">>> log_z shape is", log_z)
+            log_softmax = lm_logits.view(-1, lm_logits.size(-1)) - log_z
+            print(">>> Log Softmax Shape is given as", log_softmax.shape)
+
             # TODO(thom): Add z_loss https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/layers.py#L666
 
         if not return_dict:
