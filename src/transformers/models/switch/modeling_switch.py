@@ -22,6 +22,7 @@ import warnings
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 from typing import Any, TypeVar, Iterator, Iterable, Generic
 from torch.nn import CrossEntropyLoss
 from torch.utils.checkpoint import checkpoint
@@ -318,8 +319,9 @@ def clone_module_list(module: M, n: int) -> TypedModuleList[M]:
     return TypedModuleList([copy.deepcopy(module) for _ in range(n)])
 
 class SwitchLayerFF(nn.Module):
-    def __init__(self, config, capacity_factor=None, drop_tokens=None, is_scale_prob=None, n_experts=None, expert=None, d_model=None):
+    def __init__(self, config, capacity_factor=10, drop_tokens=False, is_scale_prob=True, n_experts=2, expert=None):
         super().__init__()
+        self.epsilon = 1e-6
         if config.feed_forward_proj == "relu":
             self.DenseReluDense = SwitchDenseReluDense(config)
         elif config.feed_forward_proj == "gated-gelu":
@@ -328,82 +330,77 @@ class SwitchLayerFF(nn.Module):
             raise ValueError(
                 f"{self.config.feed_forward_proj} is not supported. Choose between `relu` and `gated-gelu`"
             )
-        # self.capacity_factor = capacity_factor
-        # self.is_scale_prob = is_scale_prob
-        # self.n_experts = n_experts
-        # self.drop_tokens = drop_tokens
-        # self.experts = clone_module_list(expert, n_experts)
-        # self.switch = nn.Linear(d_model, n_experts)
-        # self.softmax = nn.Softmax(dim=-1)
-        self.layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
+        self.capacity_factor = capacity_factor
+        self.is_scale_prob = is_scale_prob
+        self.n_experts = n_experts
+        self.drop_tokens = drop_tokens
+        self.d_model = config.d_model
+
+        # Used for routing
+        self.experts = nn.ModuleList([self.DenseReluDense] * self.n_experts)
+        self.router = nn.Linear(self.d_model, self.n_experts)
+        self.softmax = nn.Softmax(dim=-1)
+        self.layer_norm = SwitchLayerNorm(self.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
 
     def forward(self, hidden_states):
-        # The following is prototype code for Switch taken from LabML
-        # x = hidden_states
-        # seq_len, batch_size, d_model = hidden_states.shape
-        # x = x.view(-1, d_model)
-        # route_prob = self.softmax(self.switch(x))
-        # route_prob_max, routes = torch.max(route_prob, dim=-1)
-        # indexes_list = [torch.eq(routes, i).nonzero(as_tuple=True)[0] for i in range(self.n_experts)]
-        # final_output = x.new_zeros(x.shape)
-        # capacity = int(self.capacity_factor * len(x) / self.n_experts)
+        # TODO support mixed precision (gates should be float32)
+        # TODO add torch distributed
+        # TODO add support for more than 2 experts
+        # TODO: Add XM calls for parallelism on a single tpu
 
+        # input shape: batch_size, d_model, seq_len
+        x = hidden_states.clone()
+        # New shape: d_model, batch_size, seq_len
+        x = x.transpose_(0, 1)
 
-        # counts = x.new_tensor([len(indexes_list[i]) for i in range(self.n_experts)])
+        gate_inputs = x.to(torch.float32)
+        # input jitter
 
-        # # Initialize an empty list of dropped tokens
-        # dropped = []
-        # # Only drop tokens if `drop_tokens` is `True`.
-        # if self.drop_tokens:
-        #     # Drop tokens in each of the experts
-        #     for i in range(self.n_experts):
-        #         # Ignore if the expert is not over capacity
-        #         if len(indexes_list[i]) <= capacity:
-        #             continue
-        #         # Shuffle indexes before dropping
-        #         indexes_list[i] = indexes_list[i][torch.randperm(len(indexes_list[i]))]
-        #         # Collect the tokens over capacity as dropped tokens
-        #         dropped.append(indexes_list[i][capacity:])
-        #         # Keep only the tokens upto the capacity of the expert
-        #         indexes_list[i] = indexes_list[i][:capacity]
+        gate_inputs = gate_inputs * torch.FloatTensor(gate_inputs.shape).uniform_(1 - self.epsilon,  1 + self.epsilon)
+        raw_gates = self.router(gate_inputs)
+        gate_logits = self.softmax(raw_gates)
 
-        # # Get outputs of the expert FFNs
-        # expert_output = [self.experts[i](x[indexes_list[i], :]) for i in range(self.n_experts)]
+        # Map tokens to their experts
+        expert_gate, expert_index = torch.topk(gate_logits, 1, dim=-1)
 
-        #         # Assign to final output
-        # for i in range(self.n_experts):
-        #     final_output[indexes_list[i], :] = expert_output[i]
+        # TODO rewrite as mask (non-zero is super slow)
+        expert_mask = F.one_hot(expert_index, self.n_experts)
+        # breakpoint()
+        indexes_list = [torch.eq(expert_index, i).nonzero(as_tuple=True)[0] for i in range(self.n_experts)]
+        final_output = x.new_zeros(x.shape)
+        capacity = int(self.capacity_factor * len(x) / self.n_experts)
+        counts = x.new_tensor([len(indexes_list[i]) for i in range(self.n_experts)])
 
-        # # Pass through the dropped tokens
-        # if dropped:
-        #     dropped = torch.cat(dropped)
-        #     final_output[dropped, :] = x[dropped, :]
+        # TODO Check MTF implementation of drop token handling
+        dropped = []
+        if self.drop_tokens:
+            for i in range(self.n_experts):
+                if len(indexes_list[i]) <= capacity:
+                    continue
+                indexes_list[i] = indexes_list[i][torch.randperm(len(indexes_list[i]))]
+                dropped.append(indexes_list[i][capacity:])
+                indexes_list[i] = indexes_list[i][:capacity]
 
-        # if self.is_scale_prob:
-        #     # Multiply by the expert outputs by the probabilities $y = p_i(x) E_i(x)$
-        #     final_output = final_output * route_prob_max.view(-1, 1)
-        # else:
-        #     # Don't scale the values but multiply by $\frac{p}{\hat{p}} = 1$ so that the gradients flow
-        #     # (this is something we experimented with).
-        #     final_output = final_output * (route_prob_max / route_prob_max.detach()).view(-1, 1)
+        # TODO: Change to parallel (look at distributed)
+        expert_output = [self.experts[i](x[indexes_list[i], :]) for i in range(self.n_experts)]
 
-        # # Change the shape of the final output back to `[seq_len, batch_size, d_model]`
-        # final_output = final_output.view(seq_len, batch_size, d_model)
+        for i in range(self.n_experts):
+            final_output[indexes_list[i], :] = expert_output[i]
 
-        # # Return
-        # # * the final output
-        # # * number of tokens routed to each expert
-        # # * sum of probabilities for each expert
-        # # * number of tokens dropped.
-        # # * routing probabilities of the selected experts
-        # # These are used for the load balancing loss and logging
+        #print("final_output shape after looping", final_output.shape)
+        if dropped:
+            dropped = torch.cat(dropped)
+            final_output[dropped, :] = x[dropped, :]
 
-        # return final_output, counts, route_prob.sum(0), len(dropped), route_prob_max
-        forwarded_states = self.layer_norm(hidden_states)
-        forwarded_states = self.DenseReluDense(forwarded_states)
-        hidden_states = hidden_states + self.dropout(forwarded_states)
-        return hidden_states
+        #print("route_prob_max shape", route_prob_max.shape)
+        if self.is_scale_prob:
+            # TO DO: Fix the shapes here
+            pass
+
+        final_output = final_output.transpose_(0,1)
+        # counts, route_prob.sum(0), len(dropped), route_prob_max
+        return final_output, counts, expert_gate.sum(0), len(dropped), expert_index
 
 
 class SwitchAttention(nn.Module):
@@ -531,7 +528,8 @@ class SwitchAttention(nn.Module):
         # Mask is (batch_size, key_length) (non-causal) or (batch_size, key_length, key_length)
         # past_key_value[0] is (batch_size, n_heads, q_len - 1, dim_per_head)
         batch_size, seq_length = hidden_states.shape[:2]
-
+        # print(">>> Real bs", batch_size)
+        # print(">>> Real seq_length", seq_length)
         real_seq_length = seq_length
 
         if past_key_value is not None:
@@ -704,7 +702,6 @@ class SwitchBlock(nn.Module):
         self.layer.append(SwitchLayerSelfAttention(config, has_relative_attention_bias=has_relative_attention_bias))
         if self.is_decoder:
             self.layer.append(SwitchLayerCrossAttention(config))
-
         self.layer.append(SwitchLayerFF(config))
 
     def forward(
@@ -791,8 +788,12 @@ class SwitchBlock(nn.Module):
             attention_outputs = attention_outputs + cross_attention_outputs[2:]
 
         # Apply Feed Forward layer
-        hidden_states = self.layer[-1](hidden_states)
-
+        # counts, route_prob.sum(0), len(dropped), route_prob_max
+        hidden_states, counts, route_prob, n_dropped, route_prob_max = self.layer[-1](hidden_states)
+        self.counts = counts
+        self.route_prob = route_prob
+        self.n_dropped = n_dropped
+        self.route_prob_max = route_prob_max
         # clamp inf values to enable fp16 training
         if hidden_states.dtype == torch.float16 and torch.isinf(hidden_states).any():
             clamp_value = torch.finfo(hidden_states.dtype).max - 1000
@@ -804,9 +805,12 @@ class SwitchBlock(nn.Module):
             outputs = outputs + (present_key_value_state,) + attention_outputs
         else:
             outputs = outputs + attention_outputs
-
+        # Return counts, route_prob, n_dropped, route_prob_max
+        #print("This prints at the end of switch block")
+        # print("Outputs given here as", outputs)
         return outputs  # hidden-states, present_key_value_states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
-
+    def extra_repr(self):
+        return [self.counts, self.route_prob, self.n_dropped, self.route_prob_max]
 
 class SwitchPreTrainedModel(PreTrainedModel):
     """
@@ -911,9 +915,17 @@ class SwitchStack(SwitchPreTrainedModel):
         self.embed_tokens = embed_tokens
         self.is_decoder = config.is_decoder
 
-        self.block = nn.ModuleList(
-            [SwitchBlock(config, has_relative_attention_bias=bool(i == 0)) for i in range(config.num_layers)]
-        )
+        #self.block = nn.ModuleList(
+        #    [SwitchBlock(config, has_relative_attention_bias=bool(i == 0)) for i in range(config.num_layers)]
+        #)
+        list_m = []
+        self.list_load_params = []
+        for i in range(config.num_layers):
+            block = SwitchBlock(config, has_relative_attention_bias=bool(i == 0))
+            list_m.append(block)
+            
+        self.block = nn.ModuleList(list_m)
+
         self.final_layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
 
@@ -922,6 +934,9 @@ class SwitchStack(SwitchPreTrainedModel):
         self.model_parallel = False
         self.device_map = None
         self.gradient_checkpointing = False
+
+    def extra_repr(self):
+        return self.list_load_params
 
     @add_start_docstrings(PARALLELIZE_DOCSTRING)
     def parallelize(self, device_map=None):
@@ -1102,6 +1117,8 @@ class SwitchStack(SwitchPreTrainedModel):
                     cross_attn_layer_head_mask,
                     None,  # past_key_value is always None with gradient checkpointing
                 )
+                
+                self.list_load_params.append(layer_module.extra_repr())
             else:
                 layer_outputs = layer_module(
                     hidden_states,
@@ -1116,6 +1133,7 @@ class SwitchStack(SwitchPreTrainedModel):
                     use_cache=use_cache,
                     output_attentions=output_attentions,
                 )
+                self.list_load_params.append(layer_module.extra_repr())
 
             # layer_outputs is a tuple with:
             # hidden-states, key-value-states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
@@ -1526,6 +1544,7 @@ class SwitchModel(SwitchPreTrainedModel):
             encoder_last_hidden_state=encoder_outputs.last_hidden_state,
             encoder_hidden_states=encoder_outputs.hidden_states,
             encoder_attentions=encoder_outputs.attentions,
+            switch_outputs=[1,2,3],
         )
 
 
@@ -1545,7 +1564,7 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
         self.model_dim = config.d_model
 
         self.shared = nn.Embedding(config.vocab_size, config.d_model)
-
+        self.vocab_dim = config.vocab_size
         encoder_config = copy.deepcopy(config)
         encoder_config.is_decoder = False
         encoder_config.use_cache = False
@@ -1680,6 +1699,7 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict,
             )
+            switch_output = self.encoder.extra_repr()
         elif return_dict and not isinstance(encoder_outputs, BaseModelOutput):
             encoder_outputs = BaseModelOutput(
                 last_hidden_state=encoder_outputs[0],
@@ -1740,8 +1760,11 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
 
         loss = None
         if labels is not None:
+            # We require : counts, route_prob.sum(0), len(dropped), route_prob_max for load balancing loss
+            # TODO add load balancing loss
             loss_fct = CrossEntropyLoss(ignore_index=-100)
             loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
+            #print("Switch Loss shape", loss.shape)
             # TODO(thom): Add z_loss https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/layers.py#L666
 
         if not return_dict:
@@ -1751,6 +1774,7 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
         return Seq2SeqLMOutput(
             loss=loss,
             logits=lm_logits,
+            switch_output=switch_output,
             past_key_values=decoder_outputs.past_key_values,
             decoder_hidden_states=decoder_outputs.hidden_states,
             decoder_attentions=decoder_outputs.attentions,

@@ -100,6 +100,11 @@ class SwitchConfig(PretrainedConfig):
         use_cache=True,
         pad_token_id=0,
         eos_token_id=1,
+        capacity_factor=None,
+        drop_tokens=None,
+        is_scale_prob=None,
+        n_experts=None,
+        expert=None,
         **kwargs
     ):
         self.vocab_size = vocab_size
@@ -117,6 +122,11 @@ class SwitchConfig(PretrainedConfig):
         self.initializer_factor = initializer_factor
         self.feed_forward_proj = feed_forward_proj
         self.use_cache = use_cache
+        self.capacity_factor = capacity_factor
+        self.is_scale_prob = is_scale_prob
+        self.n_experts=n_experts
+        self.expert=expert
+        drop_tokens = drop_tokens
         super().__init__(
             pad_token_id=pad_token_id,
             eos_token_id=eos_token_id,
