@@ -1777,8 +1777,10 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
             print(">>> TARGET SHAPE", labels.view(-1).shape)
             print(">>> TARGET ORIGINAL SHAPE", labels.shape)
             dot_p = log_softmax.T * labels.view(-1)
-            temp_loss = torch.sum(dot_p, dim=1)
+            temp_loss = torch.sum(dot_p)
+
             print("temp loss shape", temp_loss.shape)
+            print("Potential Z Loss obtained here is", temp_loss)
 
             # TODO(thom): Add z_loss https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/layers.py#L666
 
