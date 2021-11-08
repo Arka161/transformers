@@ -1776,6 +1776,9 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
             temp_loss = torch.sum(dot_p)
             print("Potential Z Loss obtained here is", temp_loss)
 
+            # Modify total loss
+            loss += temp_loss
+
         if not return_dict:
             output = (lm_logits,) + decoder_outputs[1:] + encoder_outputs
             return ((loss,) + output) if loss is not None else output
