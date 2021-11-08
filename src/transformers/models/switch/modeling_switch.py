@@ -1767,6 +1767,15 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
             #print("Switch Loss shape", loss.shape)
             # TODO(thom): Add z_loss https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/layers.py#L666
 
+            # PS: Not super sure of the shapes and some of the computations
+            z_orig = 0.0
+            vocab_dim = self.vocab_dim
+            log_z = torch.logsumexp(lm_logits.view(-1, lm_logits.size(-1)), 1, keepdim=True)
+            log_softmax = lm_logits.view(-1, lm_logits.size(-1)) - log_z
+            dot_p = log_softmax.T * labels.view(-1)
+            temp_loss = torch.sum(dot_p)
+            print("Potential Z Loss obtained here is", temp_loss)
+
         if not return_dict:
             output = (lm_logits,) + decoder_outputs[1:] + encoder_outputs
             return ((loss,) + output) if loss is not None else output
