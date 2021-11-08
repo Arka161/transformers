@@ -1773,6 +1773,8 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
             print(">>> log_z shape is", log_z.shape)
             log_softmax = lm_logits.view(-1, lm_logits.size(-1)) - log_z
             print(">>> Log Softmax Shape is given as", log_softmax.shape)
+            print(">>> TARGET SHAPE", labels.view(-1).shape)
+            print(">>> TARGET ORIGINAL SHAPE", labels.shape)
 
             # TODO(thom): Add z_loss https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/layers.py#L666
 
