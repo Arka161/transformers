@@ -394,7 +394,9 @@ class SwitchLayerFF(nn.Module):
             final_output[dropped, :] = x[dropped, :]
 
         #print("route_prob_max shape", route_prob_max.shape)
-        print(">>> Test Shape 1", final_output * expert_index.view(-1, 1).shape)
+        print("Final output shape", final_output.shape)
+        print("Expert Index shape", expert_index.shape)
+        print(">>> Test Shape 1", (final_output * expert_index).shape)
         print(">>> Correct shape",final_output.shape)
         if self.is_scale_prob:
             # TO DO: Fix the shapes here
