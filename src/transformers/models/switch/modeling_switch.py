@@ -393,14 +393,8 @@ class SwitchLayerFF(nn.Module):
             dropped = torch.cat(dropped)
             final_output[dropped, :] = x[dropped, :]
 
-        #print("route_prob_max shape", route_prob_max.shape)
-        print("Final output shape", final_output.shape)
-        print("Expert Index shape", expert_index.shape)
-        print(">>> Test Shape 1", (final_output * expert_index).shape)
-        print(">>> Correct shape",final_output.shape)
         if self.is_scale_prob:
-            # TO DO: Fix the shapes here
-            pass
+            final_output = final_output * expert_index
 
         final_output = final_output.transpose_(0,1)
         # counts, route_prob.sum(0), len(dropped), route_prob_max
