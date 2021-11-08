@@ -1769,7 +1769,7 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
             vocab_dim = self.vocab_dim
             print(">>> component 1 shape", lm_logits.view(-1, lm_logits.size(-1)).shape)
             print(">>> Component 2 vocab_di,", vocab_dim)
-            log_z = torch.logsumexp(lm_logits.view(-1, lm_logits.size(-1)), 1)
+            log_z = torch.logsumexp(lm_logits.view(-1, lm_logits.size(-1)), 1, keepdim=True)
             print(">>> log_z shape is", log_z.shape)
             log_softmax = lm_logits.view(-1, lm_logits.size(-1)) - log_z
             print(">>> Log Softmax Shape is given as", log_softmax.shape)
