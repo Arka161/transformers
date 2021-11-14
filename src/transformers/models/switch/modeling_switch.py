@@ -377,6 +377,8 @@ class SwitchLayerFF(nn.Module):
             indexes_list.insert(0, torch.tensor(v))
         # TODO rewrite as mask (non-zero is super slow)
         expert_mask = F.one_hot(expert_index, self.n_experts)
+        print("One hot shape", expert_mask.shape)
+        print("One hot mask", expert_mask)
         # breakpoint()
 
         # TODO
