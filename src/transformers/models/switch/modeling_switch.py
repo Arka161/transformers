@@ -811,8 +811,8 @@ class SwitchBlock(nn.Module):
         #print("This prints at the end of switch block")
         # print("Outputs given here as", outputs)
         return outputs  # hidden-states, present_key_value_states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
-    def extra_repr(self):
-        return [self.counts, self.route_prob, self.n_dropped, self.route_prob_max]
+    # def extra_repr(self):
+    #     return [self.counts, self.route_prob, self.n_dropped, self.route_prob_max]
 
 class SwitchPreTrainedModel(PreTrainedModel):
     """
@@ -1120,7 +1120,7 @@ class SwitchStack(SwitchPreTrainedModel):
                     None,  # past_key_value is always None with gradient checkpointing
                 )
                 
-                self.list_load_params.append(layer_module.extra_repr())
+                #self.list_load_params.append(layer_module.extra_repr())
             else:
                 layer_outputs = layer_module(
                     hidden_states,
@@ -1135,7 +1135,7 @@ class SwitchStack(SwitchPreTrainedModel):
                     use_cache=use_cache,
                     output_attentions=output_attentions,
                 )
-                self.list_load_params.append(layer_module.extra_repr())
+                #self.list_load_params.append(layer_module.extra_repr())
 
             (
                 one_block_nb_tokens_routed_per_expert,
