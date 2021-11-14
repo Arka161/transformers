@@ -364,7 +364,7 @@ class SwitchLayerFF(nn.Module):
 
         # Map tokens to their experts
         expert_gate, expert_index = torch.topk(gate_logits, 1, dim=-1)
-        expert_index_original = expert_index.copy()
+        expert_index_original = expert_index.clone()
         expert_index_f = torch.flatten(expert_index).tolist()
         d = defaultdict(list)
         for i in range(len(expert_index_f)):
