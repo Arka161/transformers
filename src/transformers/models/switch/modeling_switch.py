@@ -18,6 +18,7 @@
 import copy
 import math
 import os
+from collections import defaultdict
 import warnings
 
 import torch
@@ -363,15 +364,22 @@ class SwitchLayerFF(nn.Module):
 
         # Map tokens to their experts
         expert_gate, expert_index = torch.topk(gate_logits, 1, dim=-1)
-
+        expert_index_original = expert_index.copy()
+        expert_index_f = torch.flatten(expert_index).tolist()
+        d = defaultdict(list)
+        for i in range(len(expert_index_f)):
+            if expert_index_f[i] in d:
+                d[expert_index_f[i]] += [i]
+            else:
+                d[expert_index_f[i]] = [i]
+        indexes_list = []
+        for k, v in d.items():
+            indexes_list.insert(0, torch.tensor(v))
         # TODO rewrite as mask (non-zero is super slow)
         expert_mask = F.one_hot(expert_index, self.n_experts)
         # breakpoint()
 
         # TODO
-        print(">>> Expert Index printed is", expert_index)
-
-        indexes_list = [torch.eq(expert_index, i).nonzero(as_tuple=True)[0] for i in range(self.n_experts)]
         
         print(">>> indexes_list is given as ", indexes_list)
 
@@ -401,11 +409,11 @@ class SwitchLayerFF(nn.Module):
             final_output[dropped, :] = x[dropped, :]
 
         if self.is_scale_prob:
-            final_output = final_output * expert_index
+            final_output = final_output * expert_index_original
 
         final_output = final_output.transpose_(0,1)
         # counts, route_prob.sum(0), len(dropped), route_prob_max
-        return final_output, counts, expert_gate.sum(0), len(dropped), expert_index
+        return final_output, counts, expert_gate.sum(0), len(dropped), expert_index_original
 
 
 class SwitchAttention(nn.Module):
