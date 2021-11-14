@@ -400,7 +400,11 @@ class SwitchLayerFF(nn.Module):
 
         final_output = final_output.transpose_(0,1)
         # counts, route_prob.sum(0), len(dropped), route_prob_max
-        print("Final output shape", final_output.shape)
+        print("Final_output", final_output.shape)
+        print("counts", counts.shape)
+        print("route prob sum", expert_gate.sum(0).shape)
+        print("expert_index", expert_index.shape)
+
         return final_output, counts, expert_gate.sum(0), len(dropped), expert_index
 
 
