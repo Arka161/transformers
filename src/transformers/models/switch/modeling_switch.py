@@ -360,10 +360,12 @@ class SwitchLayerFF(nn.Module):
         gate_inputs = gate_inputs * torch.FloatTensor(gate_inputs.shape).uniform_(1 - self.epsilon,  1 + self.epsilon)
         raw_gates = self.router(gate_inputs)
         gate_logits = self.softmax(raw_gates)
-
+        print("Potential Route Prob correct shape", gate_logits.shape)
         # Map tokens to their experts
         expert_gate, expert_index = torch.topk(gate_logits, 1, dim=-1)
 
+        route_prob_max, token_routes = torch.max(gate_logits, dim=-1)
+        print("Route Prob Max shape", route_prob_max.shape)
         # TODO rewrite as mask (non-zero is super slow)
         expert_mask = F.one_hot(expert_index, self.n_experts)
         # breakpoint()
@@ -405,7 +407,7 @@ class SwitchLayerFF(nn.Module):
         print("route prob sum", expert_gate.sum(0).shape)
         print("expert_index", expert_index.shape)
 
-        return final_output, counts, expert_gate.sum(0), len(dropped), expert_index
+        return final_output, counts, gate_logits.sum(0), len(dropped), route_prob_max
 
 
 class SwitchAttention(nn.Module):
