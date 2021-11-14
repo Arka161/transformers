@@ -104,6 +104,7 @@ class SwitchConfig(PretrainedConfig):
         drop_tokens=None,
         is_scale_prob=None,
         n_experts=None,
+        load_balancing_loss_ceof = 1.0,
         expert=None,
         **kwargs
     ):
@@ -125,6 +126,7 @@ class SwitchConfig(PretrainedConfig):
         self.capacity_factor = capacity_factor
         self.is_scale_prob = is_scale_prob
         self.n_experts=n_experts
+        self.load_balancing_loss_ceof = load_balancing_loss_ceof
         self.expert=expert
         drop_tokens = drop_tokens
         super().__init__(

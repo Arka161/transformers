@@ -805,6 +805,8 @@ class SwitchBlock(nn.Module):
             outputs = outputs + (present_key_value_state,) + attention_outputs
         else:
             outputs = outputs + attention_outputs
+
+        outputs = outputs + ((counts, route_prob, n_dropped, route_prob_max),)
         # Return counts, route_prob, n_dropped, route_prob_max
         #print("This prints at the end of switch block")
         # print("Outputs given here as", outputs)
@@ -915,16 +917,16 @@ class SwitchStack(SwitchPreTrainedModel):
         self.embed_tokens = embed_tokens
         self.is_decoder = config.is_decoder
 
-        #self.block = nn.ModuleList(
-        #    [SwitchBlock(config, has_relative_attention_bias=bool(i == 0)) for i in range(config.num_layers)]
-        #)
-        list_m = []
-        self.list_load_params = []
-        for i in range(config.num_layers):
-            block = SwitchBlock(config, has_relative_attention_bias=bool(i == 0))
-            list_m.append(block)
+        self.block = nn.ModuleList(
+           [SwitchBlock(config, has_relative_attention_bias=bool(i == 0)) for i in range(config.num_layers)]
+        )
+        # list_m = []
+        # self.list_load_params = []
+        # for i in range(config.num_layers):
+        #     block = SwitchBlock(config, has_relative_attention_bias=bool(i == 0))
+        #     list_m.append(block)
             
-        self.block = nn.ModuleList(list_m)
+        #self.block = nn.ModuleList(list_m)
 
         self.final_layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
@@ -935,8 +937,8 @@ class SwitchStack(SwitchPreTrainedModel):
         self.device_map = None
         self.gradient_checkpointing = False
 
-    def extra_repr(self):
-        return self.list_load_params
+    # def extra_repr(self):
+    #     return self.list_load_params
 
     @add_start_docstrings(PARALLELIZE_DOCSTRING)
     def parallelize(self, device_map=None):
@@ -1067,7 +1069,7 @@ class SwitchStack(SwitchPreTrainedModel):
         encoder_decoder_position_bias = None
 
         hidden_states = self.dropout(inputs_embeds)
-
+        nb_tokens_routed_per_expert, sum_prob_per_expert, nb_dropped_tokens, route_prob_max = [], [], [], []
         for i, (layer_module, past_key_value) in enumerate(zip(self.block, past_key_values)):
             layer_head_mask = head_mask[i]
             cross_attn_layer_head_mask = cross_attn_head_mask[i]
@@ -1135,6 +1137,17 @@ class SwitchStack(SwitchPreTrainedModel):
                 )
                 self.list_load_params.append(layer_module.extra_repr())
 
+            (
+                one_block_nb_tokens_routed_per_expert,
+                one_block_sum_prob_per_expert,
+                one_block_nb_dropped_tokens,
+                one_block_route_prob_max,
+            ) = layer_outputs[-1]
+            nb_tokens_routed_per_expert.append(one_block_nb_tokens_routed_per_expert)
+            sum_prob_per_expert.append(one_block_sum_prob_per_expert)
+            nb_dropped_tokens.append(one_block_nb_dropped_tokens)
+            route_prob_max.append(one_block_route_prob_max)
+
             # layer_outputs is a tuple with:
             # hidden-states, key-value-states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
             if use_cache is False:
@@ -1166,28 +1179,41 @@ class SwitchStack(SwitchPreTrainedModel):
         hidden_states = self.final_layer_norm(hidden_states)
         hidden_states = self.dropout(hidden_states)
 
+        switch_return_for_all_blocks = (
+            torch.stack(nb_tokens_routed_per_expert),
+            torch.stack(sum_prob_per_expert),
+            nb_dropped_tokens,
+            torch.stack(route_prob_max),
+        )       
+
         # Add last layer
         if output_hidden_states:
             all_hidden_states = all_hidden_states + (hidden_states,)
 
         if not return_dict:
-            return tuple(
-                v
-                for v in [
-                    hidden_states,
-                    present_key_value_states,
-                    all_hidden_states,
-                    all_attentions,
-                    all_cross_attentions,
-                ]
-                if v is not None
+            return (
+                tuple(
+                    v
+                    for v in [
+                        hidden_states,
+                        present_key_value_states,
+                        all_hidden_states,
+                        all_attentions,
+                        all_cross_attentions,
+                    ]
+                    if v is not None
+                )
+                + (switch_return_for_all_blocks,)
             )
-        return BaseModelOutputWithPastAndCrossAttentions(
-            last_hidden_state=hidden_states,
-            past_key_values=present_key_value_states,
-            hidden_states=all_hidden_states,
-            attentions=all_attentions,
-            cross_attentions=all_cross_attentions,
+        return (
+            BaseModelOutputWithPastAndCrossAttentions(
+                last_hidden_state=hidden_states,
+                past_key_values=present_key_value_states,
+                hidden_states=all_hidden_states,
+                attentions=all_attentions,
+                cross_attentions=all_cross_attentions,
+            ),
+            switch_return_for_all_blocks,
         )
 
 
@@ -1569,12 +1595,20 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
         encoder_config.is_decoder = False
         encoder_config.use_cache = False
         encoder_config.is_encoder_decoder = False
+        encoder_config.load_balancing_loss_ceof = 1
+        encoder_config.n_experts = 1
+        encoder_config.drop_tokens = False
+        encoder_config.capacity_factor = 5
         self.encoder = SwitchStack(encoder_config, self.shared)
 
         decoder_config = copy.deepcopy(config)
         decoder_config.is_decoder = True
         decoder_config.is_encoder_decoder = False
         decoder_config.num_layers = config.num_decoder_layers
+        decoder_config.load_balancing_loss_ceof = 1
+        decoder_config.n_experts = 1
+        decoder_config.drop_tokens = False
+        decoder_config.capacity_factor = 5
         self.decoder = SwitchStack(decoder_config, self.shared)
 
         self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
@@ -1699,12 +1733,14 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict,
             )
-            switch_output = self.encoder.extra_repr()
-        elif return_dict and not isinstance(encoder_outputs, BaseModelOutput):
+            encoder_experts_output = encoder_outputs[-1]
+            encoder_outputs = encoder_outputs[0]
+        elif return_dict and not isinstance(encoder_outputs[0], BaseModelOutput):
+            encoder_experts_output = encoder_outputs[-1]
             encoder_outputs = BaseModelOutput(
-                last_hidden_state=encoder_outputs[0],
-                hidden_states=encoder_outputs[1] if len(encoder_outputs) > 1 else None,
-                attentions=encoder_outputs[2] if len(encoder_outputs) > 2 else None,
+                last_hidden_state=encoder_outputs[0][0],
+                hidden_states=encoder_outputs[0][1] if len(encoder_outputs[0]) > 1 else None,
+                attentions=encoder_outputs[0][2] if len(encoder_outputs[0]) > 2 else None,
             )
 
         hidden_states = encoder_outputs[0]
@@ -1742,7 +1778,8 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
-
+        decoder_experts_output = decoder_outputs[-1]
+        decoder_outputs = decoder_outputs[0]
         sequence_output = decoder_outputs[0]
 
         # Set device for model parallelism
@@ -1757,15 +1794,26 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
             sequence_output = sequence_output * (self.model_dim ** -0.5)
 
         lm_logits = self.lm_head(sequence_output)
-
+        # stack up encoder and decoder experts
+        stacked_nb_tokens_routed_per_expert = torch.stack((encoder_experts_output[0], decoder_experts_output[0]))
+        stacked_sum_prob_per_expert = torch.stack((encoder_experts_output[1], decoder_experts_output[1]))
+        stacked_nb_dropped_tokens = encoder_experts_output[2] + decoder_experts_output[2]
+        stacked_route_prob_max = torch.stack((encoder_experts_output[3], decoder_experts_output[3]))
+        total_nb_processed_tokens = stacked_nb_tokens_routed_per_expert.sum(dim=-1, keepdims=True)
+        fraction_tokens_routed = stacked_nb_tokens_routed_per_expert / total_nb_processed_tokens
+        mean_routing_prob = stacked_sum_prob_per_expert / total_nb_processed_tokens
+        load_balancing_loss = (self.config.n_experts * 2) * (fraction_tokens_routed * mean_routing_prob).sum()
         loss = None
         if labels is not None:
             # We require : counts, route_prob.sum(0), len(dropped), route_prob_max for load balancing loss
             # TODO add load balancing loss
             loss_fct = CrossEntropyLoss(ignore_index=-100)
             loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
+            lb_loss = self.config.load_balancing_loss_ceof * load_balancing_loss
+            loss += lb_loss
             #print("Switch Loss shape", loss.shape)
             # TODO(thom): Add z_loss https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/layers.py#L666
+            # Loss -> z_loss + LBL
 
         if not return_dict:
             output = (lm_logits,) + decoder_outputs[1:] + encoder_outputs
@@ -1774,7 +1822,6 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
         return Seq2SeqLMOutput(
             loss=loss,
             logits=lm_logits,
-            switch_output=switch_output,
             past_key_values=decoder_outputs.past_key_values,
             decoder_hidden_states=decoder_outputs.hidden_states,
             decoder_attentions=decoder_outputs.attentions,
