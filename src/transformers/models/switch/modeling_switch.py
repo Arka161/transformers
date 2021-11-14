@@ -344,7 +344,6 @@ class SwitchLayerFF(nn.Module):
         self.dropout = nn.Dropout(config.dropout_rate)
 
     def forward(self, hidden_states):
-        # TODO support mixed precision (gates should be float32)
         # TODO add torch distributed
         # TODO add support for more than 2 experts
         # TODO: Add XM calls for parallelism on a single tpu
@@ -354,9 +353,10 @@ class SwitchLayerFF(nn.Module):
         # New shape: d_model, batch_size, seq_len
         x = x.transpose_(0, 1)
 
+        # mixed precision
         gate_inputs = x.to(torch.float32)
-        # input jitter
 
+        # input jitter
         gate_inputs = gate_inputs * torch.FloatTensor(gate_inputs.shape).uniform_(1 - self.epsilon,  1 + self.epsilon)
         raw_gates = self.router(gate_inputs)
         gate_logits = self.softmax(raw_gates)
@@ -367,7 +367,14 @@ class SwitchLayerFF(nn.Module):
         # TODO rewrite as mask (non-zero is super slow)
         expert_mask = F.one_hot(expert_index, self.n_experts)
         # breakpoint()
+
+        # TODO
+        print(">>> Expert Index printed is", expert_index)
+
         indexes_list = [torch.eq(expert_index, i).nonzero(as_tuple=True)[0] for i in range(self.n_experts)]
+        
+        print(">>> indexes_list is given as ", indexes_list)
+
         final_output = x.new_zeros(x.shape)
         capacity = int(self.capacity_factor * len(x) / self.n_experts)
         counts = x.new_tensor([len(indexes_list[i]) for i in range(self.n_experts)])
@@ -1759,11 +1766,10 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
         loss = None
         if labels is not None:
             # We require : counts, route_prob.sum(0), len(dropped), route_prob_max for load balancing loss
-            # TODO add load balancing loss
+            # TODO add load balancing loss - REMAINING
             loss_fct = CrossEntropyLoss(ignore_index=-100)
             loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
-            #print("Switch Loss shape", loss.shape)
-            # TODO(thom): Add z_loss https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/layers.py#L666
+            # TODO(unsure of loss): Add z_loss https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/layers.py#L666
 
             # PS: Not super sure of the shapes and some of the computations
             z_orig = 0.0
