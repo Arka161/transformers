@@ -101,7 +101,7 @@ class SwitchConfig(PretrainedConfig):
         pad_token_id=0,
         eos_token_id=1,
         capacity_factor : float = 1,
-        drop_token : bool = True,
+        drop_token : bool = False,
         n_experts : int = 2,
         load_balancing_loss_ceof : float = 1.0,
         **kwargs
