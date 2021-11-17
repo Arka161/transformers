@@ -396,7 +396,7 @@ class SwitchLayerFF(nn.Module):
         ]
         for expert_id in range(self.n_experts):
             final_output[indexes_list[expert_id], :] = expert_output[expert_id]
-        if self.config.drop_token:
+        if self.drop_tokens:
             dropped_tokens = torch.cat(dropped_tokens)
             final_output[dropped_tokens, :] = hidden_states[dropped_tokens, :]
         final_output = final_output * route_prob_max.view(-1, 1)
