@@ -319,95 +319,87 @@ def clone_module_list(module: M, n: int) -> TypedModuleList[M]:
     return TypedModuleList([copy.deepcopy(module) for _ in range(n)])
 
 class SwitchLayerFF(nn.Module):
-    def __init__(self, config, capacity_factor=10, drop_tokens=False, is_scale_prob=True, n_experts=2, expert=None):
+    def __init__(self, config: SwitchConfig):
         super().__init__()
-        self.epsilon = 1e-6
+
+        self.config = config
+        self.switch_decider = nn.Linear(self.config.d_model, self.config.n_experts)
+        self.softmax = nn.Softmax(dim=-1)
+
         if config.feed_forward_proj == "relu":
-            self.DenseReluDense = SwitchDenseReluDense(config)
+            self.experts = clone_module_list(SwitchDenseReluDense(config), nb_clones=self.config.n_experts)
         elif config.feed_forward_proj == "gated-gelu":
-            self.DenseReluDense = SwitchDenseGatedGeluDense(config)
+            self.experts = clone_module_list(
+                SwitchDenseGatedGeluDense(config), nb_clones=self.config.n_experts
+            )
         else:
             raise ValueError(
                 f"{self.config.feed_forward_proj} is not supported. Choose between `relu` and `gated-gelu`"
             )
-        self.capacity_factor = capacity_factor
-        self.is_scale_prob = is_scale_prob
-        self.n_experts = n_experts
-        self.drop_tokens = drop_tokens
-        self.d_model = config.d_model
-
-        # Used for routing
-        self.experts = nn.ModuleList([self.DenseReluDense] * self.n_experts)
-        self.router = nn.Linear(self.d_model, self.n_experts)
-        self.softmax = nn.Softmax(dim=-1)
-        self.layer_norm = SwitchLayerNorm(self.d_model, eps=config.layer_norm_epsilon)
+        self.layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
 
-    def forward(self, hidden_states):
-        # TODO support mixed precision (gates should be float32)
-        # TODO add torch distributed
-        # TODO add support for more than 2 experts
-        # TODO: Add XM calls for parallelism on a single tpu
+    def forward(self, hidden_states: torch.Tensor):
+        forwarded_states = self.layer_norm(hidden_states)
+        (
+            forwarded_states,
+            nb_tokens_routed_per_expert,
+            sum_prob_per_expert,
+            nb_dropped_tokens,
+            route_prob_max,
+        ) = self._forward_to_experts(forwarded_states)
+        hidden_states = hidden_states + self.dropout(forwarded_states)
+        return (
+            hidden_states,
+            nb_tokens_routed_per_expert,
+            sum_prob_per_expert,
+            nb_dropped_tokens,
+            route_prob_max,
+        )
 
-        # input shape: batch_size, d_model, seq_len
-        x = hidden_states.clone()
-        # New shape: d_model, batch_size, seq_len
-        x = x.transpose_(0, 1)
+    def _forward_to_experts(self, hidden_states: torch.Tensor):
+        batch_size, seq_len, d_model = hidden_states.shape
+        # print(f"batch size: {batch_size}\nsequence length: {seq_len}\nmodel dimension: {d_model}")
+        hidden_states = hidden_states.view(-1, d_model)
+        # hidden_states.size = (batch_size * seq_len, d_model)
 
-        gate_inputs = x.to(torch.float32)
-        # input jitter
+        route_prob = self.softmax(self.switch_decider(hidden_states))  # routing prob per each token
+        # route_prob.size = (batch_size * seq_len, n_experts)
+        route_prob_max, token_routes = torch.max(route_prob, dim=-1)
 
-        gate_inputs = gate_inputs * torch.FloatTensor(gate_inputs.shape).uniform_(1 - self.epsilon,  1 + self.epsilon)
-        raw_gates = self.router(gate_inputs)
-        gate_logits = self.softmax(raw_gates)
-        print("Potential Route Prob correct shape", gate_logits.shape)
-        # Map tokens to their experts
-        expert_gate, expert_index = torch.topk(gate_logits, 1, dim=-1)
+        indexes_list = [
+            torch.eq(token_routes, expert_id).nonzero(as_tuple=True)[0] for expert_id in range(self.config.n_experts)
+        ]
 
-        route_prob_max, token_routes = torch.max(gate_logits, dim=-1)
-        print("Route Prob Max shape", route_prob_max.shape)
-        # TODO rewrite as mask (non-zero is super slow)
-        expert_mask = F.one_hot(expert_index, self.n_experts)
-        # breakpoint()
-        indexes_list = [torch.eq(expert_index, i).nonzero(as_tuple=True)[0] for i in range(self.n_experts)]
-        final_output = x.new_zeros(x.shape)
-        capacity = int(self.capacity_factor * len(x) / self.n_experts)
-        counts = x.new_tensor([len(indexes_list[i]) for i in range(self.n_experts)])
+        final_output = hidden_states.new_zeros(hidden_states.shape)
+        expert_capacity = int(self.config.capacity_factor * len(hidden_states) / self.config.n_experts)
+        nb_tokens_routed_per_expert = hidden_states.new_tensor(
+            [len(indexes_list[expert_id]) for expert_id in range(self.config.n_experts)]
+        )
 
-        # TODO Check MTF implementation of drop token handling
-        dropped = []
-        if self.drop_tokens:
-            for i in range(self.n_experts):
-                if len(indexes_list[i]) <= capacity:
-                    continue
-                indexes_list[i] = indexes_list[i][torch.randperm(len(indexes_list[i]))]
-                dropped.append(indexes_list[i][capacity:])
-                indexes_list[i] = indexes_list[i][:capacity]
+        dropped_tokens = []
+        if self.config.drop_token:
+            for expert_id in range(self.config.n_experts):
+                # Need to drop tokens ONLY if the amount of dedicated tokens for an expert is higher than its capacity
+                if len(indexes_list[expert_id]) > expert_capacity:
+                    # Shuffle indexes before dropping
+                    indexes_list[expert_id] = indexes_list[expert_id][torch.randperm(len(indexes_list[expert_id]))]
+                    dropped_tokens.append(indexes_list[expert_id][expert_capacity:])
+                    indexes_list[expert_id] = indexes_list[expert_id][:expert_capacity]
 
-        # TODO: Change to parallel (look at distributed)
-        expert_output = [self.experts[i](x[indexes_list[i], :]) for i in range(self.n_experts)]
+        expert_output = [
+            self.experts[expert_id](hidden_states[indexes_list[expert_id], :])
+            for expert_id in range(self.config.n_experts)
+        ]
+        for expert_id in range(self.config.n_experts):
+            final_output[indexes_list[expert_id], :] = expert_output[expert_id]
+        if self.config.drop_token:
+            dropped_tokens = torch.cat(dropped_tokens)
+            final_output[dropped_tokens, :] = hidden_states[dropped_tokens, :]
+        final_output = final_output * route_prob_max.view(-1, 1)
+        final_output = final_output.view(batch_size, seq_len, d_model)
 
-        for i in range(self.n_experts):
-            final_output[indexes_list[i], :] = expert_output[i]
-
-        #print("final_output shape after looping", final_output.shape)
-        if dropped:
-            dropped = torch.cat(dropped)
-            final_output[dropped, :] = x[dropped, :]
-
-        #print("route_prob_max shape", route_prob_max.shape)
-        if self.is_scale_prob:
-            # TO DO: Fix the shapes here
-            pass
-
-        final_output = final_output.transpose_(0,1)
-        # counts, route_prob.sum(0), len(dropped), route_prob_max
-        print("Final_output", final_output.shape)
-        print("counts", counts.shape)
-        print("route prob sum", expert_gate.sum(0).shape)
-        print("expert_index", expert_index.shape)
-
-        return final_output, counts, gate_logits.sum(0), len(dropped), route_prob_max
+        return final_output, nb_tokens_routed_per_expert, route_prob.sum(0), len(dropped_tokens), route_prob_max
 
 
 class SwitchAttention(nn.Module):
