@@ -371,18 +371,18 @@ class SwitchLayerFF(nn.Module):
         route_prob_max, token_routes = torch.max(route_prob, dim=-1)
 
         indexes_list = [
-            torch.eq(token_routes, expert_id).nonzero(as_tuple=True)[0] for expert_id in range(self.config.n_experts)
+            torch.eq(token_routes, expert_id).nonzero(as_tuple=True)[0] for expert_id in range(self.n_experts)
         ]
 
         final_output = hidden_states.new_zeros(hidden_states.shape)
-        expert_capacity = int(self.config.capacity_factor * len(hidden_states) / self.config.n_experts)
+        expert_capacity = int(self.capacity_factor * len(hidden_states) / self.n_experts)
         nb_tokens_routed_per_expert = hidden_states.new_tensor(
-            [len(indexes_list[expert_id]) for expert_id in range(self.config.n_experts)]
+            [len(indexes_list[expert_id]) for expert_id in range(self.n_experts)]
         )
 
         dropped_tokens = []
-        if self.config.drop_token:
-            for expert_id in range(self.config.n_experts):
+        if self.drop_tokens is True:
+            for expert_id in range(self.n_experts):
                 # Need to drop tokens ONLY if the amount of dedicated tokens for an expert is higher than its capacity
                 if len(indexes_list[expert_id]) > expert_capacity:
                     # Shuffle indexes before dropping
@@ -392,9 +392,9 @@ class SwitchLayerFF(nn.Module):
 
         expert_output = [
             self.experts[expert_id](hidden_states[indexes_list[expert_id], :])
-            for expert_id in range(self.config.n_experts)
+            for expert_id in range(self.n_experts)
         ]
-        for expert_id in range(self.config.n_experts):
+        for expert_id in range(self.n_experts):
             final_output[indexes_list[expert_id], :] = expert_output[expert_id]
         if self.config.drop_token:
             dropped_tokens = torch.cat(dropped_tokens)
