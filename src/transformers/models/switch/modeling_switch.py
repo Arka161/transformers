@@ -325,17 +325,7 @@ class SwitchLayerFF(nn.Module):
         self.config = config
         self.switch_decider = nn.Linear(self.config.d_model, self.config.n_experts)
         self.softmax = nn.Softmax(dim=-1)
-
-        if config.feed_forward_proj == "relu":
-            self.experts = clone_module_list(SwitchDenseReluDense(config), nb_clones=self.config.n_experts)
-        elif config.feed_forward_proj == "gated-gelu":
-            self.experts = clone_module_list(
-                SwitchDenseGatedGeluDense(config), nb_clones=self.config.n_experts
-            )
-        else:
-            raise ValueError(
-                f"{self.config.feed_forward_proj} is not supported. Choose between `relu` and `gated-gelu`"
-            )
+        self.experts = nn.ModuleList([self.DenseReluDense] * self.n_experts)
         self.layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
 
