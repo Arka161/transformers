@@ -319,27 +319,24 @@ def clone_module_list(module: M, n: int) -> TypedModuleList[M]:
     return TypedModuleList([copy.deepcopy(module) for _ in range(n)])
 
 class SwitchLayerFF(nn.Module):
-    def __init__(self, config : SwitchConfig, capacity_factor=10, drop_tokens=False, is_scale_prob=True, n_experts=2, expert=None):
+    def __init__(self, config: SwitchTransformerConfig):
         super().__init__()
+
+        self.config = config
+        self.switch_decider = nn.Linear(self.config.d_model, self.config.n_experts)
+        self.softmax = nn.Softmax(dim=-1)
+
         if config.feed_forward_proj == "relu":
-            self.DenseReluDense = SwitchDenseReluDense(config)
+            self.experts = populate_module_list_with_clones(T5DenseReluDense(config), nb_clones=self.config.n_experts)
         elif config.feed_forward_proj == "gated-gelu":
-            self.DenseReluDense = SwitchDenseGatedGeluDense(config)
+            self.experts = populate_module_list_with_clones(
+                T5DenseGatedGeluDense(config), nb_clones=self.config.n_experts
+            )
         else:
             raise ValueError(
                 f"{self.config.feed_forward_proj} is not supported. Choose between `relu` and `gated-gelu`"
             )
-        self.capacity_factor = capacity_factor
-        self.is_scale_prob = is_scale_prob
-        self.n_experts = n_experts
-        self.drop_tokens = drop_tokens
-        self.d_model = config.d_model
-        self.epsilon = 1e-6
-        self.config = config
-        self.switch_decider = nn.Linear(self.config.d_model, self.config.n_experts)
-        self.softmax = nn.Softmax(dim=-1)
-        self.experts = nn.ModuleList([self.DenseReluDense] * self.n_experts)
-        self.layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
+        self.layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
 
     def forward(self, hidden_states: torch.Tensor):
@@ -371,18 +368,18 @@ class SwitchLayerFF(nn.Module):
         route_prob_max, token_routes = torch.max(route_prob, dim=-1)
 
         indexes_list = [
-            torch.eq(token_routes, expert_id).nonzero(as_tuple=True)[0] for expert_id in range(self.n_experts)
+            torch.eq(token_routes, expert_id).nonzero(as_tuple=True)[0] for expert_id in range(self.config.n_experts)
         ]
 
         final_output = hidden_states.new_zeros(hidden_states.shape)
-        expert_capacity = int(self.capacity_factor * len(hidden_states) / self.n_experts)
+        expert_capacity = int(self.config.capacity_factor * len(hidden_states) / self.config.n_experts)
         nb_tokens_routed_per_expert = hidden_states.new_tensor(
-            [len(indexes_list[expert_id]) for expert_id in range(self.n_experts)]
+            [len(indexes_list[expert_id]) for expert_id in range(self.config.n_experts)]
         )
 
         dropped_tokens = []
-        if self.drop_tokens is True:
-            for expert_id in range(self.n_experts):
+        if self.config.drop_token:
+            for expert_id in range(self.config.n_experts):
                 # Need to drop tokens ONLY if the amount of dedicated tokens for an expert is higher than its capacity
                 if len(indexes_list[expert_id]) > expert_capacity:
                     # Shuffle indexes before dropping
@@ -392,18 +389,17 @@ class SwitchLayerFF(nn.Module):
 
         expert_output = [
             self.experts[expert_id](hidden_states[indexes_list[expert_id], :])
-            for expert_id in range(self.n_experts)
+            for expert_id in range(self.config.n_experts)
         ]
-        for expert_id in range(self.n_experts):
+        for expert_id in range(self.config.n_experts):
             final_output[indexes_list[expert_id], :] = expert_output[expert_id]
-        if self.drop_tokens:
+        if self.config.drop_token:
             dropped_tokens = torch.cat(dropped_tokens)
             final_output[dropped_tokens, :] = hidden_states[dropped_tokens, :]
         final_output = final_output * route_prob_max.view(-1, 1)
         final_output = final_output.view(batch_size, seq_len, d_model)
 
         return final_output, nb_tokens_routed_per_expert, route_prob.sum(0), len(dropped_tokens), route_prob_max
-
 
 class SwitchAttention(nn.Module):
     def __init__(self, config: SwitchConfig, has_relative_attention_bias=False):
