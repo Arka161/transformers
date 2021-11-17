@@ -318,8 +318,15 @@ def clone_module_list(module: M, n: int) -> TypedModuleList[M]:
     """
     return TypedModuleList([copy.deepcopy(module) for _ in range(n)])
 
+def populate_module_list_with_clones(module: nn.Module, nb_clones: int) -> nn.ModuleList:
+    """
+    ## Clone Module
+    Make a `nn.ModuleList` with clones of a given module
+    """
+    return nn.ModuleList([copy.deepcopy(module) for _ in range(nb_clones)])
+
 class SwitchLayerFF(nn.Module):
-    def __init__(self, config: SwitchTransformerConfig):
+    def __init__(self, config: SwitchConfig):
         super().__init__()
 
         self.config = config
@@ -327,16 +334,16 @@ class SwitchLayerFF(nn.Module):
         self.softmax = nn.Softmax(dim=-1)
 
         if config.feed_forward_proj == "relu":
-            self.experts = populate_module_list_with_clones(T5DenseReluDense(config), nb_clones=self.config.n_experts)
+            self.experts = populate_module_list_with_clones(SwitchDenseReluDense(config), nb_clones=self.config.n_experts)
         elif config.feed_forward_proj == "gated-gelu":
             self.experts = populate_module_list_with_clones(
-                T5DenseGatedGeluDense(config), nb_clones=self.config.n_experts
+                SwitchDenseGatedGeluDense(config), nb_clones=self.config.n_experts
             )
         else:
             raise ValueError(
                 f"{self.config.feed_forward_proj} is not supported. Choose between `relu` and `gated-gelu`"
             )
-        self.layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
+        self.layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
 
     def forward(self, hidden_states: torch.Tensor):
