@@ -319,7 +319,7 @@ def clone_module_list(module: M, n: int) -> TypedModuleList[M]:
     return TypedModuleList([copy.deepcopy(module) for _ in range(n)])
 
 class SwitchLayerFF(nn.Module):
-    def __init__(self, config: SwitchConfig):
+    def __init__(self, config : SwitchConfig, capacity_factor=10, drop_tokens=False, is_scale_prob=True, n_experts=2, expert=None):
         super().__init__()
         if config.feed_forward_proj == "relu":
             self.DenseReluDense = SwitchDenseReluDense(config)
@@ -329,6 +329,12 @@ class SwitchLayerFF(nn.Module):
             raise ValueError(
                 f"{self.config.feed_forward_proj} is not supported. Choose between `relu` and `gated-gelu`"
             )
+        self.capacity_factor = capacity_factor
+        self.is_scale_prob = is_scale_prob
+        self.n_experts = n_experts
+        self.drop_tokens = drop_tokens
+        self.d_model = config.d_model
+        self.epsilon = 1e-6
         self.config = config
         self.switch_decider = nn.Linear(self.config.d_model, self.config.n_experts)
         self.softmax = nn.Softmax(dim=-1)
