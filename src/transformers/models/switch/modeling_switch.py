@@ -374,8 +374,6 @@ class SwitchLayerFF(nn.Module):
         # hidden_states.size = (batch_size * seq_len, d_model)
 
         route_prob = self.softmax(self.router(gate_inputs))  # routing prob per each token
-        # route_prob.size = (batch_size * seq_len, n_experts)
-        #route_prob_max, token_routes = torch.max(route_prob, dim=-1)
         route_prob_max, token_routes = torch.topk(route_prob, 1, dim=-1)
         route_prob_max = torch.flatten(route_prob_max)
         token_routes = torch.flatten(token_routes)
