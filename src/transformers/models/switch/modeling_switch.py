@@ -380,6 +380,8 @@ class SwitchLayerFF(nn.Module):
         print(">>> Length Hidden states", len(hidden_states))
         final_output = hidden_states.new_zeros(hidden_states.shape)
         print(">>> Hidden states shape", hidden_states.shape)
+        print(">>> Capacity Factor", self.config.capacity_factor )
+        print(">>> self.config.n_experts", self.config.n_experts)
         expert_capacity = int(self.config.capacity_factor * len(hidden_states) / self.config.n_experts)
         nb_tokens_routed_per_expert = hidden_states.new_tensor(
             [len(indexes_list[expert_id]) for expert_id in range(self.config.n_experts)]
