@@ -318,90 +318,99 @@ def clone_module_list(module: M, n: int) -> TypedModuleList[M]:
     """
     return TypedModuleList([copy.deepcopy(module) for _ in range(n)])
 
+def populate_module_list_with_clones(module: nn.Module, nb_clones: int) -> nn.ModuleList:
+    """
+    ## Clone Module
+    Make a `nn.ModuleList` with clones of a given module
+    """
+    return nn.ModuleList([copy.deepcopy(module) for _ in range(nb_clones)])
+
 class SwitchLayerFF(nn.Module):
-    def __init__(self, config, capacity_factor=10, drop_tokens=False, is_scale_prob=True, n_experts=2, expert=None):
+    def __init__(self, config: SwitchConfig):
         super().__init__()
         self.epsilon = 1e-6
+        self.config = config
+        self.router = nn.Linear(self.config.d_model, self.config.n_experts)
+        self.softmax = nn.Softmax(dim=-1)
+
         if config.feed_forward_proj == "relu":
-            self.DenseReluDense = SwitchDenseReluDense(config)
+            self.experts = populate_module_list_with_clones(SwitchDenseReluDense(config), nb_clones=self.config.n_experts)
         elif config.feed_forward_proj == "gated-gelu":
-            self.DenseReluDense = SwitchDenseGatedGeluDense(config)
+            self.experts = populate_module_list_with_clones(
+                SwitchDenseGatedGeluDense(config), nb_clones=self.config.n_experts
+            )
         else:
             raise ValueError(
                 f"{self.config.feed_forward_proj} is not supported. Choose between `relu` and `gated-gelu`"
             )
-        self.capacity_factor = capacity_factor
-        self.is_scale_prob = is_scale_prob
-        self.n_experts = n_experts
-        self.drop_tokens = drop_tokens
-        self.d_model = config.d_model
-
-        # Used for routing
-        self.experts = nn.ModuleList([self.DenseReluDense] * self.n_experts)
-        self.router = nn.Linear(self.d_model, self.n_experts)
-        self.softmax = nn.Softmax(dim=-1)
-        self.layer_norm = SwitchLayerNorm(self.d_model, eps=config.layer_norm_epsilon)
+        self.layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
 
-    def forward(self, hidden_states):
-        # TODO support mixed precision (gates should be float32)
-        # TODO add torch distributed
-        # TODO add support for more than 2 experts
-        # TODO: Add XM calls for parallelism on a single tpu
-
-        # input shape: batch_size, d_model, seq_len
-        x = hidden_states.clone()
-        # New shape: d_model, batch_size, seq_len
-        x = x.transpose_(0, 1)
-
-        gate_inputs = x.to(torch.float32)
-        # input jitter
-
+    def forward(self, gate_inputs: torch.Tensor):
+        # mixed precision
+        gate_inputs = gate_inputs.to(torch.float32)
         gate_inputs = gate_inputs * torch.FloatTensor(gate_inputs.shape).uniform_(1 - self.epsilon,  1 + self.epsilon)
-        raw_gates = self.router(gate_inputs)
-        gate_logits = self.softmax(raw_gates)
+        forwarded_states = self.layer_norm(gate_inputs)
+        (
+            forwarded_states,
+            nb_tokens_routed_per_expert,
+            sum_prob_per_expert,
+            nb_dropped_tokens,
+            route_prob_max,
+        ) = self._forward_to_experts(forwarded_states)
+        gate_inputs = gate_inputs + self.dropout(forwarded_states)
+        return (
+            gate_inputs,
+            nb_tokens_routed_per_expert,
+            sum_prob_per_expert,
+            nb_dropped_tokens,
+            route_prob_max,
+        )
 
-        # Map tokens to their experts
-        expert_gate, expert_index = torch.topk(gate_logits, 1, dim=-1)
+    def _forward_to_experts(self, gate_inputs: torch.Tensor):
+        batch_size, seq_len, d_model = gate_inputs.shape
+        # print(f"batch size: {batch_size}\nsequence length: {seq_len}\nmodel dimension: {d_model}")
+        gate_inputs = gate_inputs.view(-1, d_model)
+        # hidden_states.size = (batch_size * seq_len, d_model)
 
-        # TODO rewrite as mask (non-zero is super slow)
-        expert_mask = F.one_hot(expert_index, self.n_experts)
-        # breakpoint()
-        indexes_list = [torch.eq(expert_index, i).nonzero(as_tuple=True)[0] for i in range(self.n_experts)]
-        final_output = x.new_zeros(x.shape)
-        capacity = int(self.capacity_factor * len(x) / self.n_experts)
-        counts = x.new_tensor([len(indexes_list[i]) for i in range(self.n_experts)])
+        route_prob = self.softmax(self.router(gate_inputs))  # routing prob per each token
+        route_prob_max, token_routes = torch.topk(route_prob, 1, dim=-1)
+        route_prob_max = torch.flatten(route_prob_max)
+        token_routes = torch.flatten(token_routes)
 
-        # TODO Check MTF implementation of drop token handling
-        dropped = []
-        if self.drop_tokens:
-            for i in range(self.n_experts):
-                if len(indexes_list[i]) <= capacity:
-                    continue
-                indexes_list[i] = indexes_list[i][torch.randperm(len(indexes_list[i]))]
-                dropped.append(indexes_list[i][capacity:])
-                indexes_list[i] = indexes_list[i][:capacity]
+        indexes_list = [
+            torch.eq(token_routes, expert_id).nonzero(as_tuple=True)[0] for expert_id in range(self.config.n_experts)
+        ]
+        final_output = gate_inputs.new_zeros(gate_inputs.shape)
+        expert_capacity = int(self.config.capacity_factor * len(gate_inputs) / self.config.n_experts)
+        nb_tokens_routed_per_expert = gate_inputs.new_tensor(
+            [len(indexes_list[expert_id]) for expert_id in range(self.config.n_experts)]
+        )
 
-        # TODO: Change to parallel (look at distributed)
-        expert_output = [self.experts[i](x[indexes_list[i], :]) for i in range(self.n_experts)]
+        dropped_tokens = []
+        
+        if self.config.drop_token:
+            for expert_id in range(self.config.n_experts):
+                # Need to drop tokens ONLY if the amount of dedicated tokens for an expert is higher than its capacity
+                if len(indexes_list[expert_id]) > expert_capacity:
+                    # Shuffle indexes before dropping
+                    indexes_list[expert_id] = indexes_list[expert_id][torch.randperm(len(indexes_list[expert_id]))]
+                    dropped_tokens.append(indexes_list[expert_id][expert_capacity:])
+                    indexes_list[expert_id] = indexes_list[expert_id][:expert_capacity]
 
-        for i in range(self.n_experts):
-            final_output[indexes_list[i], :] = expert_output[i]
+        expert_output = [
+            self.experts[expert_id](gate_inputs[indexes_list[expert_id], :])
+            for expert_id in range(self.config.n_experts)
+        ]
+        for expert_id in range(self.config.n_experts):
+            final_output[indexes_list[expert_id], :] = expert_output[expert_id]
+        if self.config.drop_token and len(dropped_tokens) > 1:
+            dropped_tokens = torch.cat(dropped_tokens)
+            final_output[dropped_tokens, :] = gate_inputs[dropped_tokens, :]
+        final_output = final_output * route_prob_max.view(-1, 1)
+        final_output = final_output.view(batch_size, seq_len, d_model)
 
-        #print("final_output shape after looping", final_output.shape)
-        if dropped:
-            dropped = torch.cat(dropped)
-            final_output[dropped, :] = x[dropped, :]
-
-        #print("route_prob_max shape", route_prob_max.shape)
-        if self.is_scale_prob:
-            # TO DO: Fix the shapes here
-            pass
-
-        final_output = final_output.transpose_(0,1)
-        # counts, route_prob.sum(0), len(dropped), route_prob_max
-        return final_output, counts, expert_gate.sum(0), len(dropped), expert_index
-
+        return final_output, nb_tokens_routed_per_expert, route_prob.sum(0), len(dropped_tokens), route_prob_max
 
 class SwitchAttention(nn.Module):
     def __init__(self, config: SwitchConfig, has_relative_attention_bias=False):
@@ -805,12 +814,10 @@ class SwitchBlock(nn.Module):
             outputs = outputs + (present_key_value_state,) + attention_outputs
         else:
             outputs = outputs + attention_outputs
+
+        outputs = outputs + ((counts, route_prob, n_dropped, route_prob_max),)
         # Return counts, route_prob, n_dropped, route_prob_max
-        #print("This prints at the end of switch block")
-        # print("Outputs given here as", outputs)
         return outputs  # hidden-states, present_key_value_states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
-    def extra_repr(self):
-        return [self.counts, self.route_prob, self.n_dropped, self.route_prob_max]
 
 class SwitchPreTrainedModel(PreTrainedModel):
     """
@@ -915,16 +922,9 @@ class SwitchStack(SwitchPreTrainedModel):
         self.embed_tokens = embed_tokens
         self.is_decoder = config.is_decoder
 
-        #self.block = nn.ModuleList(
-        #    [SwitchBlock(config, has_relative_attention_bias=bool(i == 0)) for i in range(config.num_layers)]
-        #)
-        list_m = []
-        self.list_load_params = []
-        for i in range(config.num_layers):
-            block = SwitchBlock(config, has_relative_attention_bias=bool(i == 0))
-            list_m.append(block)
-            
-        self.block = nn.ModuleList(list_m)
+        self.block = nn.ModuleList(
+           [SwitchBlock(config, has_relative_attention_bias=bool(i == 0)) for i in range(config.num_layers)]
+        )
 
         self.final_layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
@@ -934,9 +934,6 @@ class SwitchStack(SwitchPreTrainedModel):
         self.model_parallel = False
         self.device_map = None
         self.gradient_checkpointing = False
-
-    def extra_repr(self):
-        return self.list_load_params
 
     @add_start_docstrings(PARALLELIZE_DOCSTRING)
     def parallelize(self, device_map=None):
@@ -1067,7 +1064,7 @@ class SwitchStack(SwitchPreTrainedModel):
         encoder_decoder_position_bias = None
 
         hidden_states = self.dropout(inputs_embeds)
-
+        nb_tokens_routed_per_expert, sum_prob_per_expert, nb_dropped_tokens, route_prob_max = [], [], [], []
         for i, (layer_module, past_key_value) in enumerate(zip(self.block, past_key_values)):
             layer_head_mask = head_mask[i]
             cross_attn_layer_head_mask = cross_attn_head_mask[i]
@@ -1117,8 +1114,6 @@ class SwitchStack(SwitchPreTrainedModel):
                     cross_attn_layer_head_mask,
                     None,  # past_key_value is always None with gradient checkpointing
                 )
-                
-                self.list_load_params.append(layer_module.extra_repr())
             else:
                 layer_outputs = layer_module(
                     hidden_states,
@@ -1133,7 +1128,17 @@ class SwitchStack(SwitchPreTrainedModel):
                     use_cache=use_cache,
                     output_attentions=output_attentions,
                 )
-                self.list_load_params.append(layer_module.extra_repr())
+
+            (
+                one_block_nb_tokens_routed_per_expert,
+                one_block_sum_prob_per_expert,
+                one_block_nb_dropped_tokens,
+                one_block_route_prob_max,
+            ) = layer_outputs[-1]
+            nb_tokens_routed_per_expert.append(one_block_nb_tokens_routed_per_expert)
+            sum_prob_per_expert.append(one_block_sum_prob_per_expert)
+            nb_dropped_tokens.append(one_block_nb_dropped_tokens)
+            route_prob_max.append(one_block_route_prob_max)
 
             # layer_outputs is a tuple with:
             # hidden-states, key-value-states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
@@ -1166,28 +1171,41 @@ class SwitchStack(SwitchPreTrainedModel):
         hidden_states = self.final_layer_norm(hidden_states)
         hidden_states = self.dropout(hidden_states)
 
+        switch_return_for_all_blocks = (
+            torch.stack(nb_tokens_routed_per_expert),
+            torch.stack(sum_prob_per_expert),
+            nb_dropped_tokens,
+            torch.stack(route_prob_max),
+        )       
+
         # Add last layer
         if output_hidden_states:
             all_hidden_states = all_hidden_states + (hidden_states,)
 
         if not return_dict:
-            return tuple(
-                v
-                for v in [
-                    hidden_states,
-                    present_key_value_states,
-                    all_hidden_states,
-                    all_attentions,
-                    all_cross_attentions,
-                ]
-                if v is not None
+            return (
+                tuple(
+                    v
+                    for v in [
+                        hidden_states,
+                        present_key_value_states,
+                        all_hidden_states,
+                        all_attentions,
+                        all_cross_attentions,
+                    ]
+                    if v is not None
+                )
+                + (switch_return_for_all_blocks,)
             )
-        return BaseModelOutputWithPastAndCrossAttentions(
-            last_hidden_state=hidden_states,
-            past_key_values=present_key_value_states,
-            hidden_states=all_hidden_states,
-            attentions=all_attentions,
-            cross_attentions=all_cross_attentions,
+        return (
+            BaseModelOutputWithPastAndCrossAttentions(
+                last_hidden_state=hidden_states,
+                past_key_values=present_key_value_states,
+                hidden_states=all_hidden_states,
+                attentions=all_attentions,
+                cross_attentions=all_cross_attentions,
+            ),
+            switch_return_for_all_blocks,
         )
 
 
@@ -1576,7 +1594,6 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
         decoder_config.is_encoder_decoder = False
         decoder_config.num_layers = config.num_decoder_layers
         self.decoder = SwitchStack(decoder_config, self.shared)
-
         self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
 
         self.init_weights()
@@ -1699,12 +1716,14 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict,
             )
-            switch_output = self.encoder.extra_repr()
-        elif return_dict and not isinstance(encoder_outputs, BaseModelOutput):
+            encoder_experts_output = encoder_outputs[-1]
+            encoder_outputs = encoder_outputs[0]
+        elif return_dict and not isinstance(encoder_outputs[0], BaseModelOutput):
+            encoder_experts_output = encoder_outputs[-1]
             encoder_outputs = BaseModelOutput(
-                last_hidden_state=encoder_outputs[0],
-                hidden_states=encoder_outputs[1] if len(encoder_outputs) > 1 else None,
-                attentions=encoder_outputs[2] if len(encoder_outputs) > 2 else None,
+                last_hidden_state=encoder_outputs[0][0],
+                hidden_states=encoder_outputs[0][1] if len(encoder_outputs[0]) > 1 else None,
+                attentions=encoder_outputs[0][2] if len(encoder_outputs[0]) > 2 else None,
             )
 
         hidden_states = encoder_outputs[0]
@@ -1742,7 +1761,8 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
-
+        decoder_experts_output = decoder_outputs[-1]
+        decoder_outputs = decoder_outputs[0]
         sequence_output = decoder_outputs[0]
 
         # Set device for model parallelism
@@ -1757,15 +1777,26 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
             sequence_output = sequence_output * (self.model_dim ** -0.5)
 
         lm_logits = self.lm_head(sequence_output)
-
+        # stack up encoder and decoder experts
+        stacked_nb_tokens_routed_per_expert = torch.stack((encoder_experts_output[0], decoder_experts_output[0]))
+        stacked_sum_prob_per_expert = torch.stack((encoder_experts_output[1], decoder_experts_output[1]))
+        stacked_nb_dropped_tokens = encoder_experts_output[2] + decoder_experts_output[2]
+        stacked_route_prob_max = torch.stack((encoder_experts_output[3], decoder_experts_output[3]))
+        total_nb_processed_tokens = stacked_nb_tokens_routed_per_expert.sum(dim=-1, keepdims=True)
+        fraction_tokens_routed = stacked_nb_tokens_routed_per_expert / total_nb_processed_tokens
+        mean_routing_prob = stacked_sum_prob_per_expert / total_nb_processed_tokens
+        load_balancing_loss = (self.config.n_experts * 2) * (fraction_tokens_routed * mean_routing_prob).sum()
         loss = None
         if labels is not None:
             # We require : counts, route_prob.sum(0), len(dropped), route_prob_max for load balancing loss
             # TODO add load balancing loss
             loss_fct = CrossEntropyLoss(ignore_index=-100)
             loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
+            lb_loss = self.config.load_balancing_loss_ceof * load_balancing_loss
+            loss += lb_loss
             #print("Switch Loss shape", loss.shape)
             # TODO(thom): Add z_loss https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/layers.py#L666
+            # Loss -> z_loss + LBL
 
         if not return_dict:
             output = (lm_logits,) + decoder_outputs[1:] + encoder_outputs
@@ -1774,7 +1805,6 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
         return Seq2SeqLMOutput(
             loss=loss,
             logits=lm_logits,
-            switch_output=switch_output,
             past_key_values=decoder_outputs.past_key_values,
             decoder_hidden_states=decoder_outputs.hidden_states,
             decoder_attentions=decoder_outputs.attentions,
