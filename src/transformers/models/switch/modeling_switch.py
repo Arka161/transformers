@@ -377,8 +377,9 @@ class SwitchLayerFF(nn.Module):
         indexes_list = [
             torch.eq(token_routes, expert_id).nonzero(as_tuple=True)[0] for expert_id in range(self.config.n_experts)
         ]
-
+        print(">>> Length Hidden states", len(hidden_states))
         final_output = hidden_states.new_zeros(hidden_states.shape)
+        print(">>> Hidden states shape", hidden_states.shape)
         expert_capacity = int(self.config.capacity_factor * len(hidden_states) / self.config.n_experts)
         nb_tokens_routed_per_expert = hidden_states.new_tensor(
             [len(indexes_list[expert_id]) for expert_id in range(self.config.n_experts)]
