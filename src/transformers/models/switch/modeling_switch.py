@@ -328,7 +328,7 @@ def populate_module_list_with_clones(module: nn.Module, nb_clones: int) -> nn.Mo
 class SwitchLayerFF(nn.Module):
     def __init__(self, config: SwitchConfig):
         super().__init__()
-
+        self.epsilon = 1e-6
         self.config = config
         self.router = nn.Linear(self.config.d_model, self.config.n_experts)
         self.softmax = nn.Softmax(dim=-1)
