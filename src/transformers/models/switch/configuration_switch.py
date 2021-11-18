@@ -103,7 +103,7 @@ class SwitchConfig(PretrainedConfig):
         capacity_factor : float = 1,
         drop_token : bool = False,
         n_experts : int = 2,
-        load_balancing_loss_ceof : float = 1.0,
+        load_balancing_loss_ceof : float = 0.01,
         **kwargs
     ):
         self.vocab_size = vocab_size

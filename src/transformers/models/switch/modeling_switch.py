@@ -385,11 +385,13 @@ class SwitchLayerFF(nn.Module):
         )
 
         dropped_tokens = []
+        print(">>> expert_capacity is", expert_capacity)
         if self.config.drop_token:
             for expert_id in range(self.config.n_experts):
                 # Need to drop tokens ONLY if the amount of dedicated tokens for an expert is higher than its capacity
                 if len(indexes_list[expert_id]) > expert_capacity:
                     # Shuffle indexes before dropping
+                    print(">>> Code flow is coming to the place where we append to dropped token")
                     indexes_list[expert_id] = indexes_list[expert_id][torch.randperm(len(indexes_list[expert_id]))]
                     dropped_tokens.append(indexes_list[expert_id][expert_capacity:])
                     indexes_list[expert_id] = indexes_list[expert_id][:expert_capacity]
