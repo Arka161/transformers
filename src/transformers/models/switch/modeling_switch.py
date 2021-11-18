@@ -817,11 +817,7 @@ class SwitchBlock(nn.Module):
 
         outputs = outputs + ((counts, route_prob, n_dropped, route_prob_max),)
         # Return counts, route_prob, n_dropped, route_prob_max
-        #print("This prints at the end of switch block")
-        # print("Outputs given here as", outputs)
         return outputs  # hidden-states, present_key_value_states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
-    # def extra_repr(self):
-    #     return [self.counts, self.route_prob, self.n_dropped, self.route_prob_max]
 
 class SwitchPreTrainedModel(PreTrainedModel):
     """
@@ -929,13 +925,6 @@ class SwitchStack(SwitchPreTrainedModel):
         self.block = nn.ModuleList(
            [SwitchBlock(config, has_relative_attention_bias=bool(i == 0)) for i in range(config.num_layers)]
         )
-        # list_m = []
-        # self.list_load_params = []
-        # for i in range(config.num_layers):
-        #     block = SwitchBlock(config, has_relative_attention_bias=bool(i == 0))
-        #     list_m.append(block)
-            
-        #self.block = nn.ModuleList(list_m)
 
         self.final_layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
@@ -945,9 +934,6 @@ class SwitchStack(SwitchPreTrainedModel):
         self.model_parallel = False
         self.device_map = None
         self.gradient_checkpointing = False
-
-    # def extra_repr(self):
-    #     return self.list_load_params
 
     @add_start_docstrings(PARALLELIZE_DOCSTRING)
     def parallelize(self, device_map=None):
@@ -1128,8 +1114,6 @@ class SwitchStack(SwitchPreTrainedModel):
                     cross_attn_layer_head_mask,
                     None,  # past_key_value is always None with gradient checkpointing
                 )
-                
-                #self.list_load_params.append(layer_module.extra_repr())
             else:
                 layer_outputs = layer_module(
                     hidden_states,
@@ -1144,7 +1128,6 @@ class SwitchStack(SwitchPreTrainedModel):
                     use_cache=use_cache,
                     output_attentions=output_attentions,
                 )
-                #self.list_load_params.append(layer_module.extra_repr())
 
             (
                 one_block_nb_tokens_routed_per_expert,
