@@ -407,9 +407,9 @@ class SwitchLayerFF(nn.Module):
         ]
         for expert_id in range(self.config.n_experts):
             final_output[indexes_list[expert_id], :] = expert_output[expert_id]
-        # if self.config.drop_token:
-        #     dropped_tokens = torch.cat(dropped_tokens)
-        #     final_output[dropped_tokens, :] = hidden_states[dropped_tokens, :]
+        if self.config.drop_token and len(dropped_tokens) > 1:
+            dropped_tokens = torch.cat(dropped_tokens)
+            final_output[dropped_tokens, :] = hidden_states[dropped_tokens, :]
         final_output = final_output * route_prob_max.view(-1, 1)
         final_output = final_output.view(batch_size, seq_len, d_model)
 
@@ -1607,22 +1607,13 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
         encoder_config.is_decoder = False
         encoder_config.use_cache = False
         encoder_config.is_encoder_decoder = False
-        encoder_config.load_balancing_loss_ceof = 1
-        encoder_config.n_experts = 1
-        encoder_config.drop_tokens = False
-        encoder_config.capacity_factor = 5
         self.encoder = SwitchStack(encoder_config, self.shared)
 
         decoder_config = copy.deepcopy(config)
         decoder_config.is_decoder = True
         decoder_config.is_encoder_decoder = False
         decoder_config.num_layers = config.num_decoder_layers
-        decoder_config.load_balancing_loss_ceof = 1
-        decoder_config.n_experts = 1
-        decoder_config.drop_tokens = False
-        decoder_config.capacity_factor = 5
         self.decoder = SwitchStack(decoder_config, self.shared)
-
         self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
 
         self.init_weights()
