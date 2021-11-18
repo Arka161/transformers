@@ -381,8 +381,8 @@ class SwitchLayerFF(nn.Module):
         print(">>> Expert_gate shape", expert_gate.shape)
         print(">>> expert_index shape is", expert_index.shape)
 
-        print(">>> route_prob_max shape is", route_prob_max)
-        print(">>> Token routes shape", token_routes)
+        print(">>> route_prob_max shape is", route_prob_max.shape)
+        print(">>> Token routes shape", token_routes.shape)
 
 
         indexes_list = [
