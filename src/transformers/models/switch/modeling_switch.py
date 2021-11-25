@@ -1780,8 +1780,8 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
         # stack up encoder and decoder experts
         stacked_nb_tokens_routed_per_expert = torch.stack((encoder_experts_output[0], decoder_experts_output[0]))
         stacked_sum_prob_per_expert = torch.stack((encoder_experts_output[1], decoder_experts_output[1]))
-        stacked_nb_dropped_tokens = encoder_experts_output[2] + decoder_experts_output[2]
-        stacked_route_prob_max = torch.stack((encoder_experts_output[3], decoder_experts_output[3]))
+        # stacked_nb_dropped_tokens = encoder_experts_output[2] + decoder_experts_output[2]
+        # stacked_route_prob_max = torch.stack((encoder_experts_output[3], decoder_experts_output[3]))
         total_nb_processed_tokens = stacked_nb_tokens_routed_per_expert.sum(dim=-1, keepdims=True)
         fraction_tokens_routed = stacked_nb_tokens_routed_per_expert / total_nb_processed_tokens
         mean_routing_prob = stacked_sum_prob_per_expert / total_nb_processed_tokens
