@@ -375,8 +375,8 @@ class SwitchLayerFF(nn.Module):
 
         route_prob = self.softmax(self.router(gate_inputs))  # routing prob per each token
         route_prob_max, token_routes = torch.topk(route_prob, 1, dim=-1)
-         print("Route prob max before", route_prob_max)
-         print("Token routes before", token_routes)
+        print("Route prob max before", route_prob_max)
+        print("Token routes before", token_routes)
         route_prob_max = torch.flatten(route_prob_max)
         token_routes = torch.flatten(token_routes)
 
@@ -387,6 +387,9 @@ class SwitchLayerFF(nn.Module):
             torch.masked_select(torch.arange(batch_size * seq_len), torch.eq(token_routes, expert_id))
             for expert_id in range(self.config.n_experts)
         ]
+        print("Batch size", batch_size)
+        print("Seq Len", seq_len)
+        print("nexpert", self.config.n_experts)
         print("Indexes list", indexes_list)
         final_output = gate_inputs.new_zeros(gate_inputs.shape)
         expert_capacity = int(self.config.capacity_factor * len(gate_inputs) / self.config.n_experts)
