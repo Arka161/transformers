@@ -380,7 +380,7 @@ class SwitchLayerFF(nn.Module):
         route_prob_max, token_routes = torch.topk(route_prob, 1, dim=-1)
         route_prob_max = torch.flatten(route_prob_max)
         token_routes = torch.flatten(token_routes)
-        token_routes = torch.nn.functional.one_hot(token_routes, num_classes=4)
+        token_routes = torch.nn.functional.one_hot(token_routes, num_classes=self.config.n_experts)
         print(">>> Token routes", token_routes)
         nb_tokens_routed_per_expert = token_routes.count_nonzero(0)
         token_routes = token_routes.view(batch_size, seq_len, self.config.n_experts)
@@ -390,7 +390,7 @@ class SwitchLayerFF(nn.Module):
 
         print(">>> Token routes after repeats", token_routes)
 
-        gate_inputs = gate_inputs.repeat(1,1,4).view(batch_size, seq_len, d_model, self.config.n_experts)
+        gate_inputs = gate_inputs.repeat(1,1,self.config.n_experts).view(batch_size, seq_len, d_model, self.config.n_experts)
 
         print(">>> Gate inputs", gate_inputs)
         
