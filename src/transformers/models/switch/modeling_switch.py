@@ -386,6 +386,9 @@ class SwitchLayerFF(nn.Module):
         token_routes = token_routes.view(batch_size, seq_len, self.config.n_experts)
 
         # apply the experts to the inputs
+
+        print("Repeat print shape", token_routes.repeat(1, 1, seq_len).shape)
+        # seq: 7, bs: 1, d_m = 64, n_e = 2
         token_routes = token_routes.repeat(1, 1, seq_len).view(batch_size, seq_len, d_model, self.config.n_experts)
 
         print(">>> Token routes after repeats", token_routes)
