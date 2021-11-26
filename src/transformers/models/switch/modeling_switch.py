@@ -407,10 +407,10 @@ class SwitchLayerFF(nn.Module):
         print(">>> Shape of gate_inputs", gate_inputs.shape)
         print(">>> Masked inputs after einsum", masked_inputs)
 
-        layer1_out = torch.einsum('bsd,bsde->bsde', wi, masked_inputs)
+        layer1_out = torch.einsum('bsd,bsde->bsde', self.wi, masked_inputs)
         out = self.act(layer1_out)
         out = self.dropout(out)
-        experts_out = torch.einsum('bsd,bsde->bsde', wo, out)
+        experts_out = torch.einsum('bsd,bsde->bsde', self.wo, out)
         final_output = torch.sum(experts_out, dim=3)
         #breakpoint()
 
