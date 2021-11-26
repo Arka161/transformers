@@ -334,11 +334,14 @@ class SwitchLayerFF(nn.Module):
         self.softmax = nn.Softmax(dim=-1)
 
         if config.feed_forward_proj == "relu":
-            self.experts = populate_module_list_with_clones(SwitchDenseReluDense(config), nb_clones=self.config.n_experts)
+            self.act = nn.ReLU()
+            self.wi = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32)
+            self.wo = torch.zeros([self.config.n_experts, self.config.d_ff,  self.config.d_model], dtype=torch.float32)
+            self.wi.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
+            self.wo.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_ff) ** -0.5))
         elif config.feed_forward_proj == "gated-gelu":
-            self.experts = populate_module_list_with_clones(
-                SwitchDenseGatedGeluDense(config), nb_clones=self.config.n_experts
-            )
+            # TODO : replace SwitchDenseGatedGeluDense with an einsum implementation
+            self.act = ACT2FN["gelu_new"]
         else:
             raise ValueError(
                 f"{self.config.feed_forward_proj} is not supported. Choose between `relu` and `gated-gelu`"
@@ -369,24 +372,38 @@ class SwitchLayerFF(nn.Module):
 
     def _forward_to_experts(self, gate_inputs: torch.Tensor):
         batch_size, seq_len, d_model = gate_inputs.shape
-        # print(f"batch size: {batch_size}\nsequence length: {seq_len}\nmodel dimension: {d_model}")
-        gate_inputs = gate_inputs.view(-1, d_model)
+        # gate_inputs = gate_inputs.view(-1, d_model)
         # hidden_states.size = (batch_size * seq_len, d_model)
 
+
+        # compute the routing probabilities
         route_prob = self.softmax(self.router(gate_inputs))  # routing prob per each token
         route_prob_max, token_routes = torch.topk(route_prob, 1, dim=-1)
         route_prob_max = torch.flatten(route_prob_max)
         token_routes = torch.flatten(token_routes)
-        indexes_list = [
-            torch.masked_select(torch.arange(batch_size * seq_len), torch.eq(token_routes, expert_id))
-            for expert_id in range(self.config.n_experts)
-        ]
-        final_output = gate_inputs.new_zeros(gate_inputs.shape)
-        expert_capacity = int(self.config.capacity_factor * len(gate_inputs) / self.config.n_experts)
-        nb_tokens_routed_per_expert = gate_inputs.new_tensor(
-            [len(indexes_list[expert_id]) for expert_id in range(self.config.n_experts)]
-        )
+        token_routes = torch.nn.functional.one_hot(token_routes, num_classes=4)
+        nb_tokens_routed_per_expert = token_routes.count_nonzero(0)
+        token_routes = token_routes.view(batch_size, seq_len, self.config.n_experts)
 
+        # apply the experts to the inputs
+        token_routes = token_routes.repeat(1, 1, seq_len).view(batch_size, seq_len, d_model, self.config.n_experts)
+        gate_inputs = gate_inputs.repeat(1,1,4).view(batch_size, seq_len, d_model, self.config.n_experts)
+        breakpoint()
+        masked_inputs = torch.einsum('bsde,bsde->bsde', token_routes, gate_inputs)
+        layer1_out = torch.einsum('bsd,bsde->bsde', wi, masked_inputs)
+        out = self.act(layer1_out)
+        out = self.dropout(out)
+        experts_out = torch.einsum('bsd,bsde->bsde', wo, out)
+        final_output = torch.sum(experts_out, dim=3)
+        breakpoint()
+
+        # indexes_list = [
+        #     torch.masked_select(torch.arange(batch_size * seq_len), torch.eq(token_routes, expert_id))
+        #     for expert_id in range(self.config.n_experts)
+        # ]
+        # final_output = gate_inputs.new_zeros(gate_inputs.shape)
+        expert_capacity = int(self.config.capacity_factor * len(gate_inputs) / self.config.n_experts)
+        # nb_tokens_routed_per_expert = gate_inputs.
         dropped_tokens = []
         
         if self.config.drop_token:
