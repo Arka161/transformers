@@ -375,27 +375,38 @@ class SwitchLayerFF(nn.Module):
         # gate_inputs = gate_inputs.view(-1, d_model)
         # hidden_states.size = (batch_size * seq_len, d_model)
 
-
         # compute the routing probabilities
         route_prob = self.softmax(self.router(gate_inputs))  # routing prob per each token
         route_prob_max, token_routes = torch.topk(route_prob, 1, dim=-1)
         route_prob_max = torch.flatten(route_prob_max)
         token_routes = torch.flatten(token_routes)
         token_routes = torch.nn.functional.one_hot(token_routes, num_classes=4)
+        print(">>> Token routes", token_routes)
         nb_tokens_routed_per_expert = token_routes.count_nonzero(0)
         token_routes = token_routes.view(batch_size, seq_len, self.config.n_experts)
 
         # apply the experts to the inputs
         token_routes = token_routes.repeat(1, 1, seq_len).view(batch_size, seq_len, d_model, self.config.n_experts)
+
+        print(">>> Token routes after repeats", token_routes)
+
         gate_inputs = gate_inputs.repeat(1,1,4).view(batch_size, seq_len, d_model, self.config.n_experts)
-        breakpoint()
+
+        print(">>> Gate inputs", gate_inputs)
+        
+        #breakpoint()
         masked_inputs = torch.einsum('bsde,bsde->bsde', token_routes, gate_inputs)
+
+        print(">>>  Shape of token_routes", token_routes.shape)
+        print(">>> Shape of gate_inputs", gate_inputs.shape)
+        print(">>> Masked inputs after einsum", masked_inputs)
+
         layer1_out = torch.einsum('bsd,bsde->bsde', wi, masked_inputs)
         out = self.act(layer1_out)
         out = self.dropout(out)
         experts_out = torch.einsum('bsd,bsde->bsde', wo, out)
         final_output = torch.sum(experts_out, dim=3)
-        breakpoint()
+        #breakpoint()
 
         # indexes_list = [
         #     torch.masked_select(torch.arange(batch_size * seq_len), torch.eq(token_routes, expert_id))
