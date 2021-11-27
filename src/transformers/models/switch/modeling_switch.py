@@ -372,34 +372,59 @@ class SwitchLayerFF(nn.Module):
 
     def _forward_to_experts(self, gate_inputs: torch.Tensor):
         batch_size, seq_len, d_model = gate_inputs.shape
+        print(">>> start of _forward_to_experts, gate_inputs shape is", gate_inputs.shape)
         # gate_inputs = gate_inputs.view(-1, d_model)
         # hidden_states.size = (batch_size * seq_len, d_model)
         n_tokens = batch_size * seq_len
         expert_capacity = int(self.config.capacity_factor * n_tokens / self.config.n_experts)
 
+        print(">>> Expert Capacity", expert_capacity)
+        print(">>> self.config.capacity_factor is given as", self.config.capacity_factor)
+
         # compute the routing probabilities
         route_prob = self.softmax(self.router(gate_inputs))
+
+        print(">>> probabilities, given by route_prob", route_prob)
+
         expert_gate, expert_index = torch.topk(route_prob, 1, dim=-1)
+
+        print(">>> Expert Gate (Route Prob Max) is given as", expert_gate)
+        print(">>> expert_index (expert_index) is given as ", expert_index)
+
         expert_index = torch.flatten(expert_index)
         expert_gate = expert_gate.view(-1, 1)
+
+        print(">>> Expert gate shape after flatten and view", expert_gate.shape)
+
         expert_mask = torch.nn.functional.one_hot(expert_index, num_classes=self.config.n_experts)
+
+        print(">>> Expert Mask", expert_mask)
+        print(">>> Expert Mask shape", expert_mask.shape)
+
         nb_tokens_routed_per_expert = expert_mask.count_nonzero(0)
         # expert_mask = expert_mask.view(batch_size, seq_len, self.config.n_experts)
         expert_masked_probs = expert_mask * expert_gate
         # k-dim is expert_capacity
         expert_gate_probs, expert_gate_indices = torch.topk(expert_masked_probs, expert_capacity, dim=0) #[expert_capacity, n_experts, batch_size, seq_len]
 
+        
         dispatch_tensor = expert_gate_indices
         combine_tensor = dispatch_tensor * expert_gate_probs
         dispatch_tensor = torch.nn.functional.one_hot(expert_gate_indices, num_classes=n_tokens)
+        
+        print(">>> Dispatch Tensor shape is", dispatch_tensor.shape)
+        print(">>> Combine Tensor Shape is", combine_tensor.shape)
 
         # gate_inputs: batch_size, seq_len, d_model -> batch_size * seq_len, d_model
         gate_inputs = gate_inputs.view(-1, d_model)
+
+        print(">>> gate_inputs Shape", gate_inputs.shape)
 
         # dispatch_tensor: expert_capacity, n_experts, n_tokens
         expert_inputs = torch.einsum("tm,cet->cem", gate_inputs, dispatch_tensor.float())
         # dispatch_tensor: expert_capacity, n_experts, batch_size, seq_len
         # gate_input: batch_size, seq_len, d_model
+        print(">>> expert_inputs shape", expert_inputs.shape)
 
         # self.wi: n_experts, d_model, d_ff; expert_inputs: expert_capacity, n_experts, d_model
         layer1_out = torch.einsum('emf,cem->cef', self.wi, expert_inputs)
@@ -414,14 +439,6 @@ class SwitchLayerFF(nn.Module):
         # TODO: figure out how to get this down to [batch_size, seq_len, d_model]
         # final output should be [batch_size, seq_len, d_model]
         breakpoint()
-
-        # indexes_list = [
-        #     torch.masked_select(torch.arange(batch_size * seq_len), torch.eq(expert_index, expert_id))
-        #     for expert_id in range(self.config.n_experts)
-        # ]
-        # final_output = gate_inputs.new_zeros(gate_inputs.shape)
-
-        # nb_tokens_routed_per_expert = gate_inputs.
         dropped_tokens = []
         
         if self.config.drop_token:
