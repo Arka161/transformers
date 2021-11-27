@@ -405,9 +405,13 @@ class SwitchLayerFF(nn.Module):
         # expert_mask = expert_mask.view(batch_size, seq_len, self.config.n_experts)
         expert_masked_probs = expert_mask * expert_gate
         # k-dim is expert_capacity
+        
+        print(">>> expert_masked_probs before top k", expert_masked_probs.shape)
+
         expert_gate_probs, expert_gate_indices = torch.topk(expert_masked_probs, expert_capacity, dim=0) #[expert_capacity, n_experts, batch_size, seq_len]
 
-        
+        print(">>> expert_masked_probs after top k", expert_gate_probs.shape)
+        print(">>> expert_gate_indices shape", expert_gate_indices.shape)
         dispatch_tensor = expert_gate_indices
         combine_tensor = dispatch_tensor * expert_gate_probs
         dispatch_tensor = torch.nn.functional.one_hot(expert_gate_indices, num_classes=n_tokens)
