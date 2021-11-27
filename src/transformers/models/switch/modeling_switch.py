@@ -425,12 +425,19 @@ class SwitchLayerFF(nn.Module):
         # dispatch_tensor: expert_capacity, n_experts, batch_size, seq_len
         # gate_input: batch_size, seq_len, d_model
         print(">>> expert_inputs shape", expert_inputs.shape)
+        print(">>> self.wi shapes", self.wi.shape)
 
         # self.wi: n_experts, d_model, d_ff; expert_inputs: expert_capacity, n_experts, d_model
         layer1_out = torch.einsum('emf,cem->cef', self.wi, expert_inputs)
         # layer1_out: expert_capacity, n_experts, d_ff
+
+        print("layer1_out shape", layer1_out.shape)
+
         out = self.act(layer1_out)
         out = self.dropout(out)
+
+        print(">>> out shape", out.shape)
+
         # out: expert_capacity, n_experts, d_ff; self.wo: n_experts, d_ff, d_model
         experts_out = torch.einsum('efm,cef->cem', self.wo, out)
         print(">>> Experts_out shape", experts_out.shape)
