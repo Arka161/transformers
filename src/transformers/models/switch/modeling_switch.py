@@ -433,7 +433,7 @@ class SwitchLayerFF(nn.Module):
         out = self.dropout(out)
         # out: expert_capacity, n_experts, d_ff; self.wo: n_experts, d_ff, d_model
         experts_out = torch.einsum('efm,cef->cem', self.wo, out)
-
+        print(">>> Experts_out shape", experts_out.shape)
         # experts_out: expert_capacity, n_experts, d_model; combine_tensor: expert_capacity, n_experts
         final_output = torch.einsum('cem,ce->cem', experts_out, combine_tensor.float())
         # TODO: figure out how to get this down to [batch_size, seq_len, d_model]
