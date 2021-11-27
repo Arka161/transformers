@@ -359,7 +359,7 @@ class SwitchLayerFF(nn.Module):
             nb_tokens_routed_per_expert,
             sum_prob_per_expert,
             nb_dropped_tokens,
-            route_prob_max,
+            expert_gate,
         ) = self._forward_to_experts(forwarded_states)
         gate_inputs = gate_inputs + self.dropout(forwarded_states)
         return (
@@ -367,42 +367,60 @@ class SwitchLayerFF(nn.Module):
             nb_tokens_routed_per_expert,
             sum_prob_per_expert,
             nb_dropped_tokens,
-            route_prob_max,
+            expert_gate,
         )
 
     def _forward_to_experts(self, gate_inputs: torch.Tensor):
         batch_size, seq_len, d_model = gate_inputs.shape
         # gate_inputs = gate_inputs.view(-1, d_model)
         # hidden_states.size = (batch_size * seq_len, d_model)
-
+        n_tokens = batch_size * seq_len
+        expert_capacity = int(self.config.capacity_factor * n_tokens / self.config.n_experts)
 
         # compute the routing probabilities
-        route_prob = self.softmax(self.router(gate_inputs))  # routing prob per each token
-        route_prob_max, token_routes = torch.topk(route_prob, 1, dim=-1)
-        route_prob_max = torch.flatten(route_prob_max)
-        token_routes = torch.flatten(token_routes)
-        token_routes = torch.nn.functional.one_hot(token_routes, num_classes=4)
-        nb_tokens_routed_per_expert = token_routes.count_nonzero(0)
-        token_routes = token_routes.view(batch_size, seq_len, self.config.n_experts)
+        route_prob = self.softmax(self.router(gate_inputs))
+        expert_gate, expert_index = torch.topk(route_prob, 1, dim=-1)
+        expert_index = torch.flatten(expert_index)
+        expert_gate = expert_gate.view(-1, 1)
+        expert_mask = torch.nn.functional.one_hot(expert_index, num_classes=self.config.n_experts)
+        nb_tokens_routed_per_expert = expert_mask.count_nonzero(0)
+        # expert_mask = expert_mask.view(batch_size, seq_len, self.config.n_experts)
+        expert_masked_probs = expert_mask * expert_gate
+        # k-dim is expert_capacity
+        expert_gate_probs, expert_gate_indices = torch.topk(expert_masked_probs, expert_capacity, dim=0) #[expert_capacity, n_experts, batch_size, seq_len]
 
-        # apply the experts to the inputs
-        token_routes = token_routes.repeat(1, 1, seq_len).view(batch_size, seq_len, d_model, self.config.n_experts)
-        gate_inputs = gate_inputs.repeat(1,1,4).view(batch_size, seq_len, d_model, self.config.n_experts)
-        breakpoint()
-        masked_inputs = torch.einsum('bsde,bsde->bsde', token_routes, gate_inputs)
-        layer1_out = torch.einsum('bsd,bsde->bsde', wi, masked_inputs)
+        dispatch_tensor = expert_gate_indices
+        combine_tensor = dispatch_tensor * expert_gate_probs
+        dispatch_tensor = torch.nn.functional.one_hot(expert_gate_indices, num_classes=n_tokens)
+
+        # gate_inputs: batch_size, seq_len, d_model -> batch_size * seq_len, d_model
+        gate_inputs = gate_inputs.view(-1, d_model)
+
+        # dispatch_tensor: expert_capacity, n_experts, n_tokens
+        expert_inputs = torch.einsum("tm,cet->cem", gate_inputs, dispatch_tensor.float())
+        # dispatch_tensor: expert_capacity, n_experts, batch_size, seq_len
+        # gate_input: batch_size, seq_len, d_model
+
+        # self.wi: n_experts, d_model, d_ff; expert_inputs: expert_capacity, n_experts, d_model
+        layer1_out = torch.einsum('emf,cem->cef', self.wi, expert_inputs)
+        # layer1_out: expert_capacity, n_experts, d_ff
         out = self.act(layer1_out)
         out = self.dropout(out)
-        experts_out = torch.einsum('bsd,bsde->bsde', wo, out)
-        final_output = torch.sum(experts_out, dim=3)
+        # out: expert_capacity, n_experts, d_ff; self.wo: n_experts, d_ff, d_model
+        experts_out = torch.einsum('efm,cef->cem', self.wo, out)
+
+        # experts_out: expert_capacity, n_experts, d_model; combine_tensor: expert_capacity, n_experts
+        final_output = torch.einsum('cem,ce->cem', experts_out, combine_tensor.float())
+        # TODO: figure out how to get this down to [batch_size, seq_len, d_model]
+        # final output should be [batch_size, seq_len, d_model]
         breakpoint()
 
         # indexes_list = [
-        #     torch.masked_select(torch.arange(batch_size * seq_len), torch.eq(token_routes, expert_id))
+        #     torch.masked_select(torch.arange(batch_size * seq_len), torch.eq(expert_index, expert_id))
         #     for expert_id in range(self.config.n_experts)
         # ]
         # final_output = gate_inputs.new_zeros(gate_inputs.shape)
-        expert_capacity = int(self.config.capacity_factor * len(gate_inputs) / self.config.n_experts)
+
         # nb_tokens_routed_per_expert = gate_inputs.
         dropped_tokens = []
         
@@ -424,10 +442,10 @@ class SwitchLayerFF(nn.Module):
         if self.config.drop_token and len(dropped_tokens) > 1:
             dropped_tokens = torch.cat(dropped_tokens)
             final_output[dropped_tokens, :] = gate_inputs[dropped_tokens, :]
-        final_output = final_output * route_prob_max.view(-1, 1)
+        final_output = final_output * expert_gate.view(-1, 1)
         final_output = final_output.view(batch_size, seq_len, d_model)
 
-        return final_output, nb_tokens_routed_per_expert, route_prob.sum(0), len(dropped_tokens), route_prob_max
+        return final_output, nb_tokens_routed_per_expert, route_prob.sum(0), len(dropped_tokens), expert_gate
 
 class SwitchAttention(nn.Module):
     def __init__(self, config: SwitchConfig, has_relative_attention_bias=False):
@@ -814,12 +832,12 @@ class SwitchBlock(nn.Module):
             attention_outputs = attention_outputs + cross_attention_outputs[2:]
 
         # Apply Feed Forward layer
-        # counts, route_prob.sum(0), len(dropped), route_prob_max
-        hidden_states, counts, route_prob, n_dropped, route_prob_max = self.layer[-1](hidden_states)
+        # counts, route_prob.sum(0), len(dropped), expert_gate
+        hidden_states, counts, route_prob, n_dropped, expert_gate = self.layer[-1](hidden_states)
         self.counts = counts
         self.route_prob = route_prob
         self.n_dropped = n_dropped
-        self.route_prob_max = route_prob_max
+        self.expert_gate = expert_gate
         # clamp inf values to enable fp16 training
         if hidden_states.dtype == torch.float16 and torch.isinf(hidden_states).any():
             clamp_value = torch.finfo(hidden_states.dtype).max - 1000
@@ -832,8 +850,8 @@ class SwitchBlock(nn.Module):
         else:
             outputs = outputs + attention_outputs
 
-        outputs = outputs + ((counts, route_prob, n_dropped, route_prob_max),)
-        # Return counts, route_prob, n_dropped, route_prob_max
+        outputs = outputs + ((counts, route_prob, n_dropped, expert_gate),)
+        # Return counts, route_prob, n_dropped, expert_gate
         return outputs  # hidden-states, present_key_value_states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
 
 class SwitchPreTrainedModel(PreTrainedModel):
@@ -1081,7 +1099,7 @@ class SwitchStack(SwitchPreTrainedModel):
         encoder_decoder_position_bias = None
 
         hidden_states = self.dropout(inputs_embeds)
-        nb_tokens_routed_per_expert, sum_prob_per_expert, nb_dropped_tokens, route_prob_max = [], [], [], []
+        nb_tokens_routed_per_expert, sum_prob_per_expert, nb_dropped_tokens, expert_gate = [], [], [], []
         for i, (layer_module, past_key_value) in enumerate(zip(self.block, past_key_values)):
             layer_head_mask = head_mask[i]
             cross_attn_layer_head_mask = cross_attn_head_mask[i]
@@ -1150,12 +1168,12 @@ class SwitchStack(SwitchPreTrainedModel):
                 one_block_nb_tokens_routed_per_expert,
                 one_block_sum_prob_per_expert,
                 one_block_nb_dropped_tokens,
-                one_block_route_prob_max,
+                one_block_expert_gate,
             ) = layer_outputs[-1]
             nb_tokens_routed_per_expert.append(one_block_nb_tokens_routed_per_expert)
             sum_prob_per_expert.append(one_block_sum_prob_per_expert)
             nb_dropped_tokens.append(one_block_nb_dropped_tokens)
-            route_prob_max.append(one_block_route_prob_max)
+            expert_gate.append(one_block_expert_gate)
 
             # layer_outputs is a tuple with:
             # hidden-states, key-value-states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
@@ -1192,7 +1210,7 @@ class SwitchStack(SwitchPreTrainedModel):
             torch.stack(nb_tokens_routed_per_expert),
             torch.stack(sum_prob_per_expert),
             nb_dropped_tokens,
-            torch.stack(route_prob_max),
+            torch.stack(expert_gate),
         )       
 
         # Add last layer
@@ -1798,14 +1816,14 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
         stacked_nb_tokens_routed_per_expert = torch.stack((encoder_experts_output[0], decoder_experts_output[0]))
         stacked_sum_prob_per_expert = torch.stack((encoder_experts_output[1], decoder_experts_output[1]))
         # stacked_nb_dropped_tokens = encoder_experts_output[2] + decoder_experts_output[2]
-        # stacked_route_prob_max = torch.stack((encoder_experts_output[3], decoder_experts_output[3]))
+        # stacked_expert_gate = torch.stack((encoder_experts_output[3], decoder_experts_output[3]))
         total_nb_processed_tokens = stacked_nb_tokens_routed_per_expert.sum(dim=-1, keepdims=True)
         fraction_tokens_routed = stacked_nb_tokens_routed_per_expert / total_nb_processed_tokens
         mean_routing_prob = stacked_sum_prob_per_expert / total_nb_processed_tokens
         load_balancing_loss = (self.config.n_experts * 2) * (fraction_tokens_routed * mean_routing_prob).sum()
         loss = None
         if labels is not None:
-            # We require : counts, route_prob.sum(0), len(dropped), route_prob_max for load balancing loss
+            # We require : counts, route_prob.sum(0), len(dropped), expert_gate for load balancing loss
             # TODO add load balancing loss
             loss_fct = CrossEntropyLoss(ignore_index=-100)
             loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
