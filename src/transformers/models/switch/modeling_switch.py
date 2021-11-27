@@ -370,28 +370,34 @@ class SwitchLayerFF(nn.Module):
             expert_gate,
         )
 
-    def _forward_to_experts(self, gate_inputs: torch.Tensor):
-        batch_size, seq_len, d_model = gate_inputs.shape
-        # gate_inputs = gate_inputs.view(-1, d_model)
-        # hidden_states.size = (batch_size * seq_len, d_model)
-        n_tokens = batch_size * seq_len
-        expert_capacity = int(self.config.capacity_factor * n_tokens / self.config.n_experts)
+    def _forward_to_experts(self, inputs: torch.Tensor):
+        batch_size, seq_len, d_model = inputs.shape
+        num_cores = 1
+        inputs = inputs.reshape([num_cores, batch_size * seq_len, d_model])
+        import torch.nn.functional as F
 
+        # constants
+        tokens_per_core = batch_size * seq_len
+        expert_capacity = int(self.config.capacity_factor * tokens_per_core / self.config.n_experts)
+        breakpoint()
         # compute the routing probabilities
-        route_prob = self.softmax(self.router(gate_inputs))
+        route_prob = self.softmax(self.router(inputs))
         expert_gate, expert_index = torch.topk(route_prob, 1, dim=-1)
-        expert_index = torch.flatten(expert_index)
-        expert_gate = expert_gate.view(-1, 1)
+        expert_index = expert_index.reshape([num_cores, tokens_per_core])
+        expert_gate = expert_gate.reshape([num_cores, tokens_per_core])
         expert_mask = torch.nn.functional.one_hot(expert_index, num_classes=self.config.n_experts)
         nb_tokens_routed_per_expert = expert_mask.count_nonzero(0)
-        # expert_mask = expert_mask.view(batch_size, seq_len, self.config.n_experts)
         expert_masked_probs = expert_mask * expert_gate
-        # k-dim is expert_capacity
-        expert_gate_probs, expert_gate_indices = torch.topk(expert_masked_probs, expert_capacity, dim=0) #[expert_capacity, n_experts, batch_size, seq_len]
 
+        position_in_expert = torch.cumsum(expert_mask, dim=0) * expert_mask
+
+        # k-dim is expert_capacity. expert_gate_indices: [expert_capacity, n_experts, batch_size, seq_len]
+        expert_gate_probs, expert_gate_indices = torch.topk(expert_masked_probs, expert_capacity, dim=0)
+
+        # [num cores, tokens per core, num experts, expert capacity]
         dispatch_tensor = expert_gate_indices
         combine_tensor = dispatch_tensor * expert_gate_probs
-        dispatch_tensor = torch.nn.functional.one_hot(expert_gate_indices, num_classes=n_tokens)
+        dispatch_tensor = torch.nn.functional.one_hot(expert_gate_indices, num_classes=tokens_per_core)
 
         # gate_inputs: batch_size, seq_len, d_model -> batch_size * seq_len, d_model
         gate_inputs = gate_inputs.view(-1, d_model)
