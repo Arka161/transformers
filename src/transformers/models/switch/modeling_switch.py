@@ -375,7 +375,8 @@ class SwitchLayerFF(nn.Module):
             nb_dropped_tokens,
             expert_gate,
         )
-    def apply_activations(self, expert_inputs):
+
+    def experts_forward(self, expert_inputs):
         if self.config.feed_forward_proj == "relu":
             # self.wi: (n_experts, d_model, d_ff)
             # layer1_out: (expert_capacity, n_experts, d_ff)
@@ -392,10 +393,9 @@ class SwitchLayerFF(nn.Module):
             out = self.dropout(intermid_expert)
             expert_outputs = torch.einsum('xfm,xbcf->xbcm', self.wo, out)
             return expert_outputs
-        return
+        raise Exception("Unknown feed forward projection")
 
     def _forward_to_experts(self, inputs: torch.Tensor):
-
         ### Define Shapes ###
         batch_size, seq_len, d_model = inputs.shape
         tokens_per_core = batch_size * seq_len
@@ -433,7 +433,7 @@ class SwitchLayerFF(nn.Module):
         expert_inputs = torch.einsum("btm,btxc->xbcm", inputs, dispatch_tensor.float())
 
         ### Perform Expert Forward ###
-        expert_outputs = self.apply_activations(expert_inputs)
+        expert_outputs = self.experts_forward(expert_inputs)
         # experts_out: expert_capacity, n_experts, d_model; combine_tensor: expert_capacity, n_experts
         final_output = torch.einsum('xbcm,btxc->btm', expert_outputs, combine_tensor.float())
 
