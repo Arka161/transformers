@@ -371,87 +371,58 @@ class SwitchLayerFF(nn.Module):
         )
 
     def _forward_to_experts(self, inputs: torch.Tensor):
-        batch_size, seq_len, d_model = inputs.shape
-        num_cores = 1
-        inputs = inputs.reshape([num_cores, batch_size * seq_len, d_model])
-        import torch.nn.functional as F
 
-        # constants
+        ### Define Shapes ###
+        batch_size, seq_len, d_model = inputs.shape
         tokens_per_core = batch_size * seq_len
         expert_capacity = int(self.config.capacity_factor * tokens_per_core / self.config.n_experts)
-        breakpoint()
-        # compute the routing probabilities
-        route_prob = self.softmax(self.router(inputs))
-        expert_gate, expert_index = torch.topk(route_prob, 1, dim=-1)
-        expert_index = expert_index.reshape([num_cores, tokens_per_core])
-        expert_gate = expert_gate.reshape([num_cores, tokens_per_core])
+        num_cores = 1
+        inputs = inputs.reshape([num_cores, batch_size * seq_len, d_model])
+
+        ### Perform Routing ###
+        # router_probs: (n_cores n_tokens, n_experts)
+        router_logits = self.router(inputs)
+        router_probs = self.softmax(router_logits)
+
+        ### Setup Expert Inputs and Dispatch tensor ###
+        # expert_gate, expert_index: (n_cores n_tokens)
+        expert_gate, expert_index = torch.max(router_probs, dim=-1)
+
+        # expert mask: (n_cores, n_tokens, n_experts)
         expert_mask = torch.nn.functional.one_hot(expert_index, num_classes=self.config.n_experts)
+
         nb_tokens_routed_per_expert = expert_mask.count_nonzero(0)
-        expert_masked_probs = expert_mask * expert_gate
 
         position_in_expert = torch.cumsum(expert_mask, dim=0) * expert_mask
+        # Keep only tokens that fit within expert capacity.
+        expert_mask *= torch.less(position_in_expert, expert_capacity)
+        expert_mask_flat = torch.sum(expert_mask, dim=-1)
 
-        # k-dim is expert_capacity. expert_gate_indices: [expert_capacity, n_experts, batch_size, seq_len]
-        expert_gate_probs, expert_gate_indices = torch.topk(expert_masked_probs, expert_capacity, dim=0)
+        # mask out token that don't fit within expert capacity
+        expert_gate *= expert_mask_flat
 
-        # [num cores, tokens per core, num experts, expert capacity]
-        dispatch_tensor = expert_gate_indices
-        combine_tensor = dispatch_tensor * expert_gate_probs
-        dispatch_tensor = torch.nn.functional.one_hot(expert_gate_indices, num_classes=tokens_per_core)
+        # combine_tensor: (n_cores, n_tokens, n_experts, expert_capacity)
+        combine_tensor = expert_gate.reshape(num_cores, tokens_per_core, 1, 1) * expert_mask_flat.reshape(num_cores, tokens_per_core, 1, 1) * F.one_hot(expert_index, num_classes=self.config.n_experts).unsqueeze(3) * F.one_hot(position_in_expert, num_classes=expert_capacity)
+        dispatch_tensor = combine_tensor.bool()
 
-        # gate_inputs: batch_size, seq_len, d_model -> batch_size * seq_len, d_model
-        gate_inputs = gate_inputs.view(-1, d_model)
+        # expert_inputs: (n_experts, n_cores, expert_capacity, d_model)
+        expert_inputs = torch.einsum("btm,btxc->xbcm", inputs, dispatch_tensor.float())
 
-        # dispatch_tensor: expert_capacity, n_experts, n_tokens
-        expert_inputs = torch.einsum("tm,cet->cem", gate_inputs, dispatch_tensor.float())
-        # dispatch_tensor: expert_capacity, n_experts, batch_size, seq_len
-        # gate_input: batch_size, seq_len, d_model
-
-        # self.wi: n_experts, d_model, d_ff; expert_inputs: expert_capacity, n_experts, d_model
-        layer1_out = torch.einsum('emf,cem->cef', self.wi, expert_inputs)
-        # layer1_out: expert_capacity, n_experts, d_ff
+        ### Perform Expert Forward ###
+        # wi: (n_experts, d_model, d_ff)
+        # layer1_out: (expert_capacity, n_experts, d_ff)
+        layer1_out = torch.einsum('xmf,xbcm->xbcf', self.wi, expert_inputs)
         out = self.act(layer1_out)
         out = self.dropout(out)
         # out: expert_capacity, n_experts, d_ff; self.wo: n_experts, d_ff, d_model
-        experts_out = torch.einsum('efm,cef->cem', self.wo, out)
+        expert_outputs = torch.einsum('xfm,xbcf->xbcm', self.wo, out)
 
         # experts_out: expert_capacity, n_experts, d_model; combine_tensor: expert_capacity, n_experts
-        final_output = torch.einsum('cem,ce->cem', experts_out, combine_tensor.float())
-        # TODO: figure out how to get this down to [batch_size, seq_len, d_model]
-        # final output should be [batch_size, seq_len, d_model]
-        breakpoint()
+        final_output = torch.einsum('xbcm,btxc->btm', expert_outputs, combine_tensor.float())
 
-        # indexes_list = [
-        #     torch.masked_select(torch.arange(batch_size * seq_len), torch.eq(expert_index, expert_id))
-        #     for expert_id in range(self.config.n_experts)
-        # ]
-        # final_output = gate_inputs.new_zeros(gate_inputs.shape)
-
-        # nb_tokens_routed_per_expert = gate_inputs.
-        dropped_tokens = []
-        
-        if self.config.drop_token:
-            for expert_id in range(self.config.n_experts):
-                # Need to drop tokens ONLY if the amount of dedicated tokens for an expert is higher than its capacity
-                if len(indexes_list[expert_id]) > expert_capacity:
-                    # Shuffle indexes before dropping
-                    indexes_list[expert_id] = indexes_list[expert_id][torch.randperm(len(indexes_list[expert_id]))]
-                    dropped_tokens.append(indexes_list[expert_id][expert_capacity:])
-                    indexes_list[expert_id] = indexes_list[expert_id][:expert_capacity]
-
-        expert_output = [
-            self.experts[expert_id](gate_inputs[indexes_list[expert_id], :])
-            for expert_id in range(self.config.n_experts)
-        ]
-        for expert_id in range(self.config.n_experts):
-            final_output[indexes_list[expert_id], :] = expert_output[expert_id]
-        if self.config.drop_token and len(dropped_tokens) > 1:
-            dropped_tokens = torch.cat(dropped_tokens)
-            final_output[dropped_tokens, :] = gate_inputs[dropped_tokens, :]
-        final_output = final_output * expert_gate.view(-1, 1)
         final_output = final_output.view(batch_size, seq_len, d_model)
-
-        return final_output, nb_tokens_routed_per_expert, route_prob.sum(0), len(dropped_tokens), expert_gate
+        dropped_tokens = 0
+        return final_output, nb_tokens_routed_per_expert, router_probs.sum(0), dropped_tokens, expert_gate
 
 class SwitchAttention(nn.Module):
     def __init__(self, config: SwitchConfig, has_relative_attention_bias=False):
@@ -855,7 +826,6 @@ class SwitchBlock(nn.Module):
             outputs = outputs + (present_key_value_state,) + attention_outputs
         else:
             outputs = outputs + attention_outputs
-
         outputs = outputs + ((counts, route_prob, n_dropped, expert_gate),)
         # Return counts, route_prob, n_dropped, expert_gate
         return outputs  # hidden-states, present_key_value_states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
@@ -1819,8 +1789,8 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
 
         lm_logits = self.lm_head(sequence_output)
         # stack up encoder and decoder experts
-        stacked_nb_tokens_routed_per_expert = torch.stack((encoder_experts_output[0], decoder_experts_output[0]))
-        stacked_sum_prob_per_expert = torch.stack((encoder_experts_output[1], decoder_experts_output[1]))
+        stacked_nb_tokens_routed_per_expert = torch.stack((encoder_experts_output[0].sum(dim=1), decoder_experts_output[0].sum(dim=1)))
+        stacked_sum_prob_per_expert = torch.stack((encoder_experts_output[1].sum(dim=1), decoder_experts_output[1].sum(dim=1)))
         # stacked_nb_dropped_tokens = encoder_experts_output[2] + decoder_experts_output[2]
         # stacked_expert_gate = torch.stack((encoder_experts_output[3], decoder_experts_output[3]))
         total_nb_processed_tokens = stacked_nb_tokens_routed_per_expert.sum(dim=-1, keepdims=True)
