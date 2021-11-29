@@ -375,6 +375,21 @@ class SwitchLayerFF(nn.Module):
             nb_dropped_tokens,
             expert_gate,
         )
+    def apply_activations(self, expert_inputs):
+        if self.config.feed_forward_proj == "relu":
+            layer1_out = torch.einsum('xmf,xbcm->xbcf', self.wi, expert_inputs)
+            out = self.act(layer1_out)
+            out = self.dropout(out)
+            expert_outputs = torch.einsum('xfm,xbcf->xbcm', self.wo, out)
+            return expert_outputs
+        elif self.config.feed_forward_proj == "gated-gelu":
+            layer1_out = torch.einsum('xmf,xbcm->xbcf', self.wi_0, expert_inputs)
+            layer1_out = self.act(layer1_out)
+            intermid_expert = torch.einsum("xyz,xabz->xabz", self.wi_1, layer1_out)
+            out = self.dropout(intermid_expert)
+            expert_outputs = torch.einsum('xfm,xbcf->xbcm', self.wo, out)
+            return expert_outputs
+        return
 
     def _forward_to_experts(self, inputs: torch.Tensor):
 
@@ -417,20 +432,7 @@ class SwitchLayerFF(nn.Module):
         ### Perform Expert Forward ###
         # wi: (n_experts, d_model, d_ff)
         # layer1_out: (expert_capacity, n_experts, d_ff)
-        print("self.wi shape", self.wi.shape)
-        layer1_out = torch.einsum('xmf,xbcm->xbcf', self.wi, expert_inputs)
-
-        print("layer1_out shape", layer1_out.shape)
-
-        mock_t = torch.einsum("xyz,xabz->xabz", self.wi, layer1_out)
-
-        print("mock_t shape", mock_t.shape)
-
-        out = self.act(layer1_out)
-        out = self.dropout(out)
-        # out: expert_capacity, n_experts, d_ff; self.wo: n_experts, d_ff, d_model
-        expert_outputs = torch.einsum('xfm,xbcf->xbcm', self.wo, out)
-
+        expert_outputs = self.apply_activations(expert_inputs)
         # experts_out: expert_capacity, n_experts, d_model; combine_tensor: expert_capacity, n_experts
         final_output = torch.einsum('xbcm,btxc->btm', expert_outputs, combine_tensor.float())
 
