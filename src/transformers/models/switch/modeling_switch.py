@@ -377,6 +377,8 @@ class SwitchLayerFF(nn.Module):
         )
     def apply_activations(self, expert_inputs):
         if self.config.feed_forward_proj == "relu":
+            # self.wi: (n_experts, d_model, d_ff)
+            # layer1_out: (expert_capacity, n_experts, d_ff)
             layer1_out = torch.einsum('xmf,xbcm->xbcf', self.wi, expert_inputs)
             out = self.act(layer1_out)
             out = self.dropout(out)
@@ -385,6 +387,7 @@ class SwitchLayerFF(nn.Module):
         elif self.config.feed_forward_proj == "gated-gelu":
             layer1_out = torch.einsum('xmf,xbcm->xbcf', self.wi_0, expert_inputs)
             layer1_out = self.act(layer1_out)
+            # Maitain shape in intermediate output
             intermid_expert = torch.einsum("xyz,xabz->xabz", self.wi_1, layer1_out)
             out = self.dropout(intermid_expert)
             expert_outputs = torch.einsum('xfm,xbcf->xbcm', self.wo, out)
@@ -430,8 +433,6 @@ class SwitchLayerFF(nn.Module):
         expert_inputs = torch.einsum("btm,btxc->xbcm", inputs, dispatch_tensor.float())
 
         ### Perform Expert Forward ###
-        # wi: (n_experts, d_model, d_ff)
-        # layer1_out: (expert_capacity, n_experts, d_ff)
         expert_outputs = self.apply_activations(expert_inputs)
         # experts_out: expert_capacity, n_experts, d_model; combine_tensor: expert_capacity, n_experts
         final_output = torch.einsum('xbcm,btxc->btm', expert_outputs, combine_tensor.float())
