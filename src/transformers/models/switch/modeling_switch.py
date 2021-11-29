@@ -422,7 +422,7 @@ class SwitchLayerFF(nn.Module):
 
         print("layer1_out shape", layer1_out.shape)
 
-        mock_t = layer1_out * self.wi
+        mock_t = torch.einsum("xyz,xabz->xabz", self.wi, layer1_out)
 
         print("mock_t shape", mock_t.shape)
 
