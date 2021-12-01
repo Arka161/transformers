@@ -325,14 +325,12 @@ def populate_module_list_with_clones(module: nn.Module, nb_clones: int) -> nn.Mo
     """
     return nn.ModuleList([copy.deepcopy(module) for _ in range(nb_clones)])
 
-class SwitchLayerFF(nn.Module):
+
+class SwitchExpertsLayer(nn.Module):
     def __init__(self, config: SwitchConfig):
         super().__init__()
         self.epsilon = 1e-6
         self.config = config
-        self.router = nn.Linear(self.config.d_model, self.config.n_experts)
-        self.softmax = nn.Softmax(dim=-1)
-
         if config.feed_forward_proj == "relu":
             self.act = nn.ReLU()
             self.wi = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32)
@@ -355,28 +353,8 @@ class SwitchLayerFF(nn.Module):
         self.layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
 
-    def forward(self, gate_inputs: torch.Tensor):
-        # mixed precision
-        gate_inputs = gate_inputs.to(torch.float32)
-        gate_inputs = gate_inputs * torch.FloatTensor(gate_inputs.shape).uniform_(1 - self.epsilon,  1 + self.epsilon)
-        forwarded_states = self.layer_norm(gate_inputs)
-        (
-            forwarded_states,
-            nb_tokens_routed_per_expert,
-            sum_prob_per_expert,
-            nb_dropped_tokens,
-            expert_gate,
-        ) = self._forward_to_experts(forwarded_states)
-        gate_inputs = gate_inputs + self.dropout(forwarded_states)
-        return (
-            gate_inputs,
-            nb_tokens_routed_per_expert,
-            sum_prob_per_expert,
-            nb_dropped_tokens,
-            expert_gate,
-        )
 
-    def experts_forward(self, expert_inputs):
+    def forward(self, expert_inputs):
         if self.config.feed_forward_proj == "relu":
             # self.wi: (n_experts, d_model, d_ff)
             # layer1_out: (expert_capacity, n_experts, d_ff)
@@ -384,28 +362,36 @@ class SwitchLayerFF(nn.Module):
             out = self.act(layer1_out)
             out = self.dropout(out)
             expert_outputs = torch.einsum('xfm,xbcf->xbcm', self.wo, out)
-            return expert_outputs
         elif self.config.feed_forward_proj == "gated-gelu":
             layer1_out = torch.einsum('xmf,xbcm->xbcf', self.wi_0, expert_inputs)
             layer1_out = self.act(layer1_out)
-            # Maitain shape in intermediate output
+            # Maintain shape in intermediate output
             intermid_expert = torch.einsum("xyz,xabz->xabz", self.wi_1, layer1_out)
             out = self.dropout(intermid_expert)
             expert_outputs = torch.einsum('xfm,xbcf->xbcm', self.wo, out)
-            return expert_outputs
-        raise Exception("Unknown feed forward projection")
+        else:
+            raise Exception("Unknown feed forward projection")
+        return expert_outputs
 
-    def _forward_to_experts(self, inputs: torch.Tensor):
+class SwitchRouterLayer(nn.Module):
+    def __init__(self, config: SwitchConfig):
+        super().__init__()
+        self.epsilon = 1e-6
+        self.config = config
+        self.linear = nn.Linear(self.config.d_model, self.config.n_experts)
+        self.softmax = nn.Softmax(dim=-1)
+
+    def forward(self, inputs: torch.Tensor):
         ### Define Shapes ###
         batch_size, seq_len, d_model = inputs.shape
-        tokens_per_core = batch_size * seq_len
-        expert_capacity = int(self.config.capacity_factor * tokens_per_core / self.config.n_experts)
-        num_cores = 1
-        inputs = inputs.reshape([num_cores, batch_size * seq_len, d_model])
+        num_cores = self.config.get("NUM_SHARDS") # world_size
+        tokens_per_core = int(batch_size * seq_len / num_cores)
+        expert_capacity = int(self.config.capacity_factor * tokens_per_core * num_cores / self.config.n_experts)
+        inputs = inputs.reshape([num_cores, tokens_per_core, d_model])
 
         ### Perform Routing ###
-        # router_probs: (n_cores n_tokens, n_experts)
-        router_logits = self.router(inputs)
+        # router_probs: (n_cores, n_tokens, n_experts)
+        router_logits = self.linear(inputs)
         router_probs = self.softmax(router_logits)
 
         ### Setup Expert Inputs and Dispatch tensor ###
@@ -415,12 +401,14 @@ class SwitchLayerFF(nn.Module):
         # expert mask: (n_cores, n_tokens, n_experts)
         expert_mask = torch.nn.functional.one_hot(expert_index, num_classes=self.config.n_experts)
 
-        nb_tokens_routed_per_expert = expert_mask.count_nonzero(0)
+        position_in_expert = torch.cumsum(expert_mask, dim=1) * expert_mask
 
-        position_in_expert = torch.cumsum(expert_mask, dim=0) * expert_mask
-        # Keep only tokens that fit within expert capacity.
-        expert_mask *= torch.less(position_in_expert, expert_capacity)
+        # Drop tokens that don't fit in expert capacity.
+        expert_mask *= torch.less(position_in_expert, expert_capacity + 1)
         expert_mask_flat = torch.sum(expert_mask, dim=-1)
+
+        # recompute position_in_expert with fewer tokens
+        position_in_expert = torch.cumsum(expert_mask, dim=1) * expert_mask
 
         # mask out token that don't fit within expert capacity
         expert_gate *= expert_mask_flat
@@ -428,18 +416,59 @@ class SwitchLayerFF(nn.Module):
         # combine_tensor: (n_cores, n_tokens, n_experts, expert_capacity)
         combine_tensor = expert_gate.reshape(num_cores, tokens_per_core, 1, 1) * expert_mask_flat.reshape(num_cores, tokens_per_core, 1, 1) * F.one_hot(expert_index, num_classes=self.config.n_experts).unsqueeze(3) * F.one_hot(position_in_expert, num_classes=expert_capacity)
         dispatch_tensor = combine_tensor.bool()
+        return dispatch_tensor, combine_tensor
 
+class SwitchLayerFF(nn.Module):
+    def __init__(self, config: SwitchConfig):
+        super().__init__()
+        self.epsilon = 1e-6
+        self.config = config
+        self.router = nn.Linear(self.config.d_model, self.config.n_experts)
+        self.layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
+        self.dropout = nn.Dropout(config.dropout_rate)
+        self.router_layer = SwitchRouterLayer(config)
+        # TODO ensure this is uniquely parameterized
+        self.experts = SwitchExpertsLayer(config)
+
+    def forward(self, inputs: torch.Tensor):
+        # mixed precision
+        inputs = inputs.to(torch.float32)
+        inputs = inputs * torch.FloatTensor(inputs.shape).uniform_(1 - self.epsilon,  1 + self.epsilon)
+        inputs = self.layer_norm(inputs)
+
+        dispatch_tensor, combine_tensor = self.router_layer(inputs)
         # expert_inputs: (n_experts, n_cores, expert_capacity, d_model)
+
         expert_inputs = torch.einsum("btm,btxc->xbcm", inputs, dispatch_tensor.float())
+        breakpoint()
+        # TODO add all-to-all
+        if self.config.get("xla_found"):
+            import torch_xla.core.xla_model as xm
+            xm.all_to_all(output, input)
 
         ### Perform Expert Forward ###
-        expert_outputs = self.experts_forward(expert_inputs)
+        expert_outputs = self.experts(expert_inputs)
+
         # experts_out: expert_capacity, n_experts, d_model; combine_tensor: expert_capacity, n_experts
         final_output = torch.einsum('xbcm,btxc->btm', expert_outputs, combine_tensor.float())
 
+        # TODO add another all-to-all
+
         final_output = final_output.view(batch_size, seq_len, d_model)
-        dropped_tokens = 0
-        return final_output, nb_tokens_routed_per_expert, router_probs.sum(0), dropped_tokens, expert_gate
+        # TODO fix these
+        nb_tokens_routed_per_expert = expert_mask.sum(dim=1)
+        dropped_tokens = num_tokens_per_core - expert_mask.sum()
+
+        inputs = inputs + self.dropout(final_output)
+        return (
+            inputs,
+            nb_tokens_routed_per_expert,
+            router_probs.sum(0),
+            nb_dropped_tokens,
+            expert_gate,
+        )
+
+
 
 class SwitchAttention(nn.Module):
     def __init__(self, config: SwitchConfig, has_relative_attention_bias=False):
@@ -1607,6 +1636,7 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
 
     def __init__(self, config):
         super().__init__(config)
+        self.config = config
         self.model_dim = config.d_model
 
         self.shared = nn.Embedding(config.vocab_size, config.d_model)
