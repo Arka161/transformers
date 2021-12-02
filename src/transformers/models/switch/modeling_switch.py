@@ -384,7 +384,7 @@ class SwitchRouterLayer(nn.Module):
     def forward(self, inputs: torch.Tensor):
         ### Define Shapes ###
         batch_size, seq_len, d_model = inputs.shape
-        num_cores = self.config.get("NUM_SHARDS") # world_size
+        num_cores = self.config.num_shards # world_size
         tokens_per_core = int(batch_size * seq_len / num_cores)
         expert_capacity = int(self.config.capacity_factor * tokens_per_core * num_cores / self.config.n_experts)
         inputs = inputs.reshape([num_cores, tokens_per_core, d_model])

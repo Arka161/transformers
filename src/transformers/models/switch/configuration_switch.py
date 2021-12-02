@@ -103,6 +103,7 @@ class SwitchConfig(PretrainedConfig):
         capacity_factor : float = 1,
         drop_token : bool = False,
         n_experts : int = 2,
+        num_shards=1,
         load_balancing_loss_ceof : float = 0.01,
         **kwargs
     ):
@@ -125,6 +126,7 @@ class SwitchConfig(PretrainedConfig):
         self.n_experts=n_experts
         self.load_balancing_loss_ceof = load_balancing_loss_ceof
         self.drop_token = drop_token
+        self.num_shards = num_shards
         super().__init__(
             pad_token_id=pad_token_id,
             eos_token_id=eos_token_id,
