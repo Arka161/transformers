@@ -451,9 +451,9 @@ class SwitchLayerFF(nn.Module):
         # expert_inputs: (n_experts, n_cores, expert_capacity, d_model)
 
         expert_inputs = torch.einsum("btm,btxc->xbcm", inputs, dispatch_tensor.float())
-        print(">>> Expert input shape", expert_inputs)
+        print(">>> Expert input shape", expert_inputs.shape)
 
-        breakpoint()
+        #breakpoint()
         # TODO add all-to-all
         if self.config.get("xla_found"):
             import torch_xla.core.xla_model as xm
