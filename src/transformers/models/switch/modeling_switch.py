@@ -381,6 +381,16 @@ class SwitchRouterLayer(nn.Module):
         self.linear = nn.Linear(self.config.d_model, self.config.n_experts)
         self.softmax = nn.Softmax(dim=-1)
 
+    # Define getters, MUST call getters after forward
+    def get_expert_gate(self):
+        return self.expert_gate
+    def get_expert_mask(self):
+        return self.expert_mask
+    def get_router_probs(self):
+        return self.router_probs
+    def get_tokens_per_core(self):
+        return self.tokens_per_core
+
     def forward(self, inputs: torch.Tensor):
         ### Define Shapes ###
         batch_size, seq_len, d_model = inputs.shape
@@ -414,6 +424,14 @@ class SwitchRouterLayer(nn.Module):
         expert_gate *= expert_mask_flat
         combine_tensor = expert_gate.reshape(num_cores, tokens_per_core, 1, 1) * expert_mask_flat.reshape(num_cores, tokens_per_core, 1, 1) * F.one_hot(expert_index, num_classes=self.config.n_experts).unsqueeze(3) * F.one_hot(position_in_expert, num_classes=expert_capacity+1)
         dispatch_tensor = combine_tensor.bool()
+
+        # Referencing variables as class variables for LB Loss (via getters)
+        self.expert_gate = expert_gate
+        self.expert_mask = expert_mask
+        self.router_probs = router_probs
+        self.tokens_per_core = tokens_per_core
+
+        # Return only the Dispatch Tensor and Combine Tensor
         return dispatch_tensor, combine_tensor
 
 class SwitchLayerFF(nn.Module):
@@ -445,7 +463,7 @@ class SwitchLayerFF(nn.Module):
         # TODO, modify the config, or maybe do a try except?
         if self.config.xla_found:
             import torch_xla.core.xla_model as xm
-            xm.all_to_all(output, input)
+            xm.all_to_all(expert_inputs, input)
         ### Perform Expert Forward ###
         expert_outputs = self.experts(expert_inputs)
 
@@ -455,20 +473,24 @@ class SwitchLayerFF(nn.Module):
         # TODO add another all-to-all
         if self.config.xla_found:
             import torch_xla.core.xla_model as xm
-            xm.all_to_all(output, input)
+            xm.all_to_all(transformer_output, input)
 
         final_output = transformer_output.view(batch_size, seq_len, d_model)
-        # TODO fix these
-        #nb_tokens_routed_per_expert = expert_mask.sum(dim=1)
-        #dropped_tokens = num_tokens_per_core - expert_mask.sum()
+        
+        expert_mask = self.router_layer.get_expert_mask()
+        tokens_per_core = self.router_layer.get_tokens_per_core()
+        router_probs = self.router_layer.get_router_probs()
+        expert_gate = self.router_layer.get_expert_gate
 
+        nb_tokens_routed_per_expert = expert_mask.sum(dim=1)
+        dropped_tokens = tokens_per_core - expert_mask.sum()
         final_output = final_output + self.dropout(final_output)
         print("We go till the end of the forward block")
         return (
             final_output,
             nb_tokens_routed_per_expert,
             router_probs.sum(0),
-            nb_dropped_tokens,
+            dropped_tokens,
             expert_gate,
         )
 
