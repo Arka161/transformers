@@ -412,17 +412,6 @@ class SwitchRouterLayer(nn.Module):
 
         # mask out token that don't fit within expert capacity
         expert_gate *= expert_mask_flat
-        # print(">>> print debug")
-        # print(">>> expert_index is", expert_index)
-        # print(">>> num_classes", self.config.n_experts)
-        
-        # print(">>> position_in_expert is" ,position_in_expert)
-
-        # print(">>> expert_capacity", expert_capacity)
-
-        # oh_1 = F.one_hot(expert_index, num_classes=self.config.n_experts).unsqueeze(3)
-        # oh_2 = F.one_hot(position_in_expert, num_classes=expert_capacity)
-        # combine_tensor: (n_cores, n_tokens, n_experts, expert_capacity)
         combine_tensor = expert_gate.reshape(num_cores, tokens_per_core, 1, 1) * expert_mask_flat.reshape(num_cores, tokens_per_core, 1, 1) * F.one_hot(expert_index, num_classes=self.config.n_experts).unsqueeze(3) * F.one_hot(position_in_expert, num_classes=expert_capacity+1)
         dispatch_tensor = combine_tensor.bool()
         return dispatch_tensor, combine_tensor
@@ -442,7 +431,6 @@ class SwitchLayerFF(nn.Module):
     def forward(self, inputs: torch.Tensor):
         # mixed precision
         batch_size, seq_len, d_model = inputs.shape
-        print(">>> Input shape bs sl d_m", inputs.shape)
         inputs = inputs.to(torch.float32)
         inputs = inputs * torch.FloatTensor(inputs.shape).uniform_(1 - self.epsilon,  1 + self.epsilon)
         inputs = self.layer_norm(inputs)
@@ -451,7 +439,6 @@ class SwitchLayerFF(nn.Module):
         # expert_inputs: (n_experts, n_cores, expert_capacity, d_model)
 
         expert_inputs = torch.einsum("btm,btxc->xbcm", inputs, dispatch_tensor.float())
-        print(">>> Expert input shape", expert_inputs.shape)
 
         #breakpoint()
         # TODO add all-to-all
@@ -462,14 +449,13 @@ class SwitchLayerFF(nn.Module):
         ### Perform Expert Forward ###
         expert_outputs = self.experts(expert_inputs)
 
-        # print(">>> Expert output shape", expert_outputs.shape)
-        # print(">>> combined tensor shape", combine_tensor.shape)
-
-        transformer_output = torch.einsum("bsne,nbed->bsd", combine_tensor, expert_outputs)
+        transformer_output = torch.einsum("bsne,nbed->bsd", combine_tensor.float(), expert_outputs)
         # experts_out: expert_capacity, n_experts, d_model; combine_tensor: expert_capacity, n_experts
-        #final_output = torch.einsum('xbcm,btxc->btm', expert_outputs, combine_tensor.float())
 
         # TODO add another all-to-all
+        if self.config.xla_found:
+            import torch_xla.core.xla_model as xm
+            xm.all_to_all(output, input)
 
         final_output = transformer_output.view(batch_size, seq_len, d_model)
         # TODO fix these
