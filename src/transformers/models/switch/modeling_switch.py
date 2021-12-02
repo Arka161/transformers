@@ -432,6 +432,8 @@ class SwitchLayerFF(nn.Module):
 
     def forward(self, inputs: torch.Tensor):
         # mixed precision
+        batch_size, seq_len, d_model = inputs.shape
+        print(">>> Input shape bs sl d_m", inputs.shape)
         inputs = inputs.to(torch.float32)
         inputs = inputs * torch.FloatTensor(inputs.shape).uniform_(1 - self.epsilon,  1 + self.epsilon)
         inputs = self.layer_norm(inputs)
@@ -440,6 +442,8 @@ class SwitchLayerFF(nn.Module):
         # expert_inputs: (n_experts, n_cores, expert_capacity, d_model)
 
         expert_inputs = torch.einsum("btm,btxc->xbcm", inputs, dispatch_tensor.float())
+        print(">>> Expert input shape", expert_inputs)
+
         breakpoint()
         # TODO add all-to-all
         if self.config.get("xla_found"):
@@ -449,17 +453,19 @@ class SwitchLayerFF(nn.Module):
         ### Perform Expert Forward ###
         expert_outputs = self.experts(expert_inputs)
 
+        print(">>> Expert output shape", expert_outputs.shape)
+        print(">>> combined tensor shape", combine_tensor.shape)
         # experts_out: expert_capacity, n_experts, d_model; combine_tensor: expert_capacity, n_experts
-        final_output = torch.einsum('xbcm,btxc->btm', expert_outputs, combine_tensor.float())
+        #final_output = torch.einsum('xbcm,btxc->btm', expert_outputs, combine_tensor.float())
 
         # TODO add another all-to-all
 
-        final_output = final_output.view(batch_size, seq_len, d_model)
+        #final_output = final_output.view(batch_size, seq_len, d_model)
         # TODO fix these
-        nb_tokens_routed_per_expert = expert_mask.sum(dim=1)
-        dropped_tokens = num_tokens_per_core - expert_mask.sum()
+        #nb_tokens_routed_per_expert = expert_mask.sum(dim=1)
+        #dropped_tokens = num_tokens_per_core - expert_mask.sum()
 
-        inputs = inputs + self.dropout(final_output)
+        #inputs = inputs + self.dropout(final_output)
         return (
             inputs,
             nb_tokens_routed_per_expert,
