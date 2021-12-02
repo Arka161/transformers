@@ -455,9 +455,9 @@ class SwitchLayerFF(nn.Module):
 
         #breakpoint()
         # TODO add all-to-all
-        if self.config.get("xla_found"):
-            import torch_xla.core.xla_model as xm
-            xm.all_to_all(output, input)
+        # if self.config.get("xla_found"):
+        #     import torch_xla.core.xla_model as xm
+        #     xm.all_to_all(output, input)
 
         ### Perform Expert Forward ###
         expert_outputs = self.experts(expert_inputs)
