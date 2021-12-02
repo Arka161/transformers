@@ -480,7 +480,7 @@ class SwitchLayerFF(nn.Module):
         expert_mask = self.router_layer.get_expert_mask()
         tokens_per_core = self.router_layer.get_tokens_per_core()
         router_probs = self.router_layer.get_router_probs()
-        expert_gate = self.router_layer.get_expert_gate
+        expert_gate = self.router_layer.get_expert_gate()
 
         nb_tokens_routed_per_expert = expert_mask.sum(dim=1)
         dropped_tokens = tokens_per_core - expert_mask.sum()
@@ -1259,7 +1259,7 @@ class SwitchStack(SwitchPreTrainedModel):
             torch.stack(sum_prob_per_expert),
             nb_dropped_tokens,
             torch.stack(expert_gate),
-        )       
+        )
 
         # Add last layer
         if output_hidden_states:
