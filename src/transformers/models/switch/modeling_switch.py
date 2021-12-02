@@ -412,7 +412,7 @@ class SwitchRouterLayer(nn.Module):
 
         # mask out token that don't fit within expert capacity
         expert_gate *= expert_mask_flat
-
+        print(">>> print debug")
         print(">>> expert_index is", expert_index)
         print(">>> num_classes", self.config.n_experts)
         
