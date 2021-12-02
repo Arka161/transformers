@@ -282,50 +282,6 @@ class SwitchDenseGatedGeluDense(nn.Module):
         hidden_states = self.wo(hidden_states)
         return hidden_states
 
-M = TypeVar('M', bound=torch.nn.Module)
-T = TypeVar('T')
-
-# https://github.com/labmlai/labml/blob/e8f2748b02e23718ebc7fb9832bb5bb953525548/helpers/labml_helpers/module.py
-class TypedModuleList(torch.nn.ModuleList, Generic[M]):
-    def __getitem__(self, idx: int) -> M:
-        return super().__getitem__(idx)
-
-    def __setitem__(self, idx: int, module: M) -> None:
-        return super().__setitem__(idx, module)
-
-    def __iter__(self) -> Iterator[M]:
-        return super().__iter__()
-
-    def __iadd__(self: T, modules: Iterable[M]) -> T:
-        return super().__iadd__(modules)
-
-    def insert(self, index: int, module: M) -> None:
-        super().insert(index, module)
-
-    def append(self: T, module: M) -> T:
-        return super().append(module)
-
-    def extend(self: T, modules: Iterable[M]) -> T:
-        return super().extend(modules)
-
-    def forward(self):
-        raise NotImplementedError()
-
-def clone_module_list(module: M, n: int) -> TypedModuleList[M]:
-    """
-    ## Clone Module
-    Make a `nn.ModuleList` with clones of a given module
-    """
-    return TypedModuleList([copy.deepcopy(module) for _ in range(n)])
-
-def populate_module_list_with_clones(module: nn.Module, nb_clones: int) -> nn.ModuleList:
-    """
-    ## Clone Module
-    Make a `nn.ModuleList` with clones of a given module
-    """
-    return nn.ModuleList([copy.deepcopy(module) for _ in range(nb_clones)])
-
-
 class SwitchExpertsLayer(nn.Module):
     def __init__(self, config: SwitchConfig):
         super().__init__()
@@ -463,7 +419,11 @@ class SwitchLayerFF(nn.Module):
         # TODO, modify the config, or maybe do a try except?
         if self.config.xla_found:
             import torch_xla.core.xla_model as xm
-            xm.all_to_all(expert_inputs, input)
+            xm.all_to_all(
+            expert_inputs,
+            split_dimension=0, #[batch, seq len, d model] −> [num cores, tokens per core, d model]
+            concat_dimension=0,
+            split_count=xm.xrt_world_size())
         ### Perform Expert Forward ###
         expert_outputs = self.experts(expert_inputs)
 
@@ -473,7 +433,11 @@ class SwitchLayerFF(nn.Module):
         # TODO add another all-to-all
         if self.config.xla_found:
             import torch_xla.core.xla_model as xm
-            xm.all_to_all(transformer_output, input)
+            xm.all_to_all(
+            transformer_output,
+            split_dimension=0, #[batch, seq len, d model] −> [num cores, tokens per core, d model]
+            concat_dimension=0,
+            split_count=xm.xrt_world_size())
 
         final_output = transformer_output.view(batch_size, seq_len, d_model)
         
