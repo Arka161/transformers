@@ -105,6 +105,7 @@ class SwitchConfig(PretrainedConfig):
         n_experts : int = 2,
         num_shards=1,
         load_balancing_loss_ceof : float = 0.01,
+        xla_found : bool = False,
         **kwargs
     ):
         self.vocab_size = vocab_size
@@ -127,6 +128,7 @@ class SwitchConfig(PretrainedConfig):
         self.load_balancing_loss_ceof = load_balancing_loss_ceof
         self.drop_token = drop_token
         self.num_shards = num_shards
+        self.xla_found = xla_found
         super().__init__(
             pad_token_id=pad_token_id,
             eos_token_id=eos_token_id,

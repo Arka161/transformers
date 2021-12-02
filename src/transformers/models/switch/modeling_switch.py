@@ -455,28 +455,31 @@ class SwitchLayerFF(nn.Module):
 
         #breakpoint()
         # TODO add all-to-all
-        # if self.config.get("xla_found"):
-        #     import torch_xla.core.xla_model as xm
-        #     xm.all_to_all(output, input)
-
+        # TODO, modify the config, or maybe do a try except?
+        if self.config.xla_found:
+            import torch_xla.core.xla_model as xm
+            xm.all_to_all(output, input)
         ### Perform Expert Forward ###
         expert_outputs = self.experts(expert_inputs)
 
-        print(">>> Expert output shape", expert_outputs.shape)
-        print(">>> combined tensor shape", combine_tensor.shape)
+        # print(">>> Expert output shape", expert_outputs.shape)
+        # print(">>> combined tensor shape", combine_tensor.shape)
+
+        transformer_output = torch.einsum("bsne,nbed->bsd", combine_tensor, expert_outputs)
         # experts_out: expert_capacity, n_experts, d_model; combine_tensor: expert_capacity, n_experts
         #final_output = torch.einsum('xbcm,btxc->btm', expert_outputs, combine_tensor.float())
 
         # TODO add another all-to-all
 
-        #final_output = final_output.view(batch_size, seq_len, d_model)
+        final_output = transformer_output.view(batch_size, seq_len, d_model)
         # TODO fix these
         #nb_tokens_routed_per_expert = expert_mask.sum(dim=1)
         #dropped_tokens = num_tokens_per_core - expert_mask.sum()
 
-        #inputs = inputs + self.dropout(final_output)
+        final_output = final_output + self.dropout(final_output)
+        print("We go till the end of the forward block")
         return (
-            inputs,
+            final_output,
             nb_tokens_routed_per_expert,
             router_probs.sum(0),
             nb_dropped_tokens,
