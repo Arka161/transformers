@@ -413,6 +413,15 @@ class SwitchRouterLayer(nn.Module):
         # mask out token that don't fit within expert capacity
         expert_gate *= expert_mask_flat
 
+        print(">>> expert_index is", expert_index)
+        print(">>> num_classes", self.config.n_experts)
+        
+        print(">>> position_in_expert is" ,position_in_expert)
+
+        print(">>> expert_capacity", expert_capacity)
+
+        oh_1 = F.one_hot(expert_index, num_classes=self.config.n_experts).unsqueeze(3)
+        oh_2 = F.one_hot(position_in_expert, num_classes=expert_capacity)
         # combine_tensor: (n_cores, n_tokens, n_experts, expert_capacity)
         combine_tensor = expert_gate.reshape(num_cores, tokens_per_core, 1, 1) * expert_mask_flat.reshape(num_cores, tokens_per_core, 1, 1) * F.one_hot(expert_index, num_classes=self.config.n_experts).unsqueeze(3) * F.one_hot(position_in_expert, num_classes=expert_capacity)
         dispatch_tensor = combine_tensor.bool()
