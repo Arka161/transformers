@@ -485,7 +485,6 @@ class SwitchLayerFF(nn.Module):
         nb_tokens_routed_per_expert = expert_mask.sum(dim=1)
         dropped_tokens = tokens_per_core - expert_mask.sum()
         final_output = final_output + self.dropout(final_output)
-        print("We go till the end of the forward block")
         return (
             final_output,
             nb_tokens_routed_per_expert,
