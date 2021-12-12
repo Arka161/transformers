@@ -294,7 +294,6 @@ class SwitchExpertsLayer(nn.Module):
             self.wi.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
             self.wo.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_ff) ** -0.5))
         elif config.feed_forward_proj == "gated-gelu":
-            # TODO : replace SwitchDenseGatedGeluDense with an einsum implementation
             self.act = ACT2FN["gelu_new"]
             self.wi_0 = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32)
             self.wi_1 = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32)
@@ -408,22 +407,22 @@ class SwitchLayerFF(nn.Module):
         inputs = inputs.to(torch.float32)
         inputs = inputs * torch.FloatTensor(inputs.shape).uniform_(1 - self.epsilon,  1 + self.epsilon)
         inputs = self.layer_norm(inputs)
+        num_cores = self.config.num_shards
 
         dispatch_tensor, combine_tensor = self.router_layer(inputs)
         # expert_inputs: (n_experts, n_cores, expert_capacity, d_model)
 
         expert_inputs = torch.einsum("btm,btxc->xbcm", inputs, dispatch_tensor.float())
 
-        #breakpoint()
-        # TODO add all-to-all
-        # TODO, modify the config, or maybe do a try except?
         if self.config.xla_found:
-            import torch_xla.core.xla_model as xm
-            xm.all_to_all(
+            import torch_xla.core.functions as xf
+
+            # Differentiable all_to_all
+            xf.all_to_all(
             expert_inputs,
             split_dimension=0, #[batch, seq len, d model] −> [num cores, tokens per core, d model]
             concat_dimension=0,
-            split_count=xm.xrt_world_size())
+            split_count=num_cores)
         ### Perform Expert Forward ###
         expert_outputs = self.experts(expert_inputs)
 
@@ -432,12 +431,13 @@ class SwitchLayerFF(nn.Module):
 
         # TODO add another all-to-all
         if self.config.xla_found:
-            import torch_xla.core.xla_model as xm
-            xm.all_to_all(
+            import torch_xla.core.functions as xf
+
+            xf.all_to_all(
             transformer_output,
             split_dimension=0, #[batch, seq len, d model] −> [num cores, tokens per core, d model]
             concat_dimension=0,
-            split_count=xm.xrt_world_size())
+            split_count=num_cores)
 
         final_output = transformer_output.view(batch_size, seq_len, d_model)
         
