@@ -103,7 +103,13 @@ class SwitchConfig(PretrainedConfig):
         capacity_factor : float = 1,
         drop_token : bool = False,
         n_experts : int = 2,
+        num_shards=1,
         load_balancing_loss_ceof : float = 0.01,
+        xla_found : bool = False,
+        global_rank : int = 1,
+        local_rank : int = 1,
+        global_world_size : int = 1,
+        local_world_size : int = 1,
         **kwargs
     ):
         self.vocab_size = vocab_size
@@ -125,6 +131,12 @@ class SwitchConfig(PretrainedConfig):
         self.n_experts=n_experts
         self.load_balancing_loss_ceof = load_balancing_loss_ceof
         self.drop_token = drop_token
+        self.num_shards = num_shards
+        self.xla_found = xla_found
+        self.local_world_size = local_world_size
+        self.global_world_size = global_world_size
+        self.local_rank = local_rank
+        self.global_rank = global_rank
         super().__init__(
             pad_token_id=pad_token_id,
             eos_token_id=eos_token_id,

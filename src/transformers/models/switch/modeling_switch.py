@@ -282,50 +282,6 @@ class SwitchDenseGatedGeluDense(nn.Module):
         hidden_states = self.wo(hidden_states)
         return hidden_states
 
-M = TypeVar('M', bound=torch.nn.Module)
-T = TypeVar('T')
-
-# https://github.com/labmlai/labml/blob/e8f2748b02e23718ebc7fb9832bb5bb953525548/helpers/labml_helpers/module.py
-class TypedModuleList(torch.nn.ModuleList, Generic[M]):
-    def __getitem__(self, idx: int) -> M:
-        return super().__getitem__(idx)
-
-    def __setitem__(self, idx: int, module: M) -> None:
-        return super().__setitem__(idx, module)
-
-    def __iter__(self) -> Iterator[M]:
-        return super().__iter__()
-
-    def __iadd__(self: T, modules: Iterable[M]) -> T:
-        return super().__iadd__(modules)
-
-    def insert(self, index: int, module: M) -> None:
-        super().insert(index, module)
-
-    def append(self: T, module: M) -> T:
-        return super().append(module)
-
-    def extend(self: T, modules: Iterable[M]) -> T:
-        return super().extend(modules)
-
-    def forward(self):
-        raise NotImplementedError()
-
-def clone_module_list(module: M, n: int) -> TypedModuleList[M]:
-    """
-    ## Clone Module
-    Make a `nn.ModuleList` with clones of a given module
-    """
-    return TypedModuleList([copy.deepcopy(module) for _ in range(n)])
-
-def populate_module_list_with_clones(module: nn.Module, nb_clones: int) -> nn.ModuleList:
-    """
-    ## Clone Module
-    Make a `nn.ModuleList` with clones of a given module
-    """
-    return nn.ModuleList([copy.deepcopy(module) for _ in range(nb_clones)])
-
-
 class SwitchExpertsLayer(nn.Module):
     def __init__(self, config: SwitchConfig):
         super().__init__()
@@ -338,7 +294,6 @@ class SwitchExpertsLayer(nn.Module):
             self.wi.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
             self.wo.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_ff) ** -0.5))
         elif config.feed_forward_proj == "gated-gelu":
-            # TODO : replace SwitchDenseGatedGeluDense with an einsum implementation
             self.act = ACT2FN["gelu_new"]
             self.wi_0 = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32)
             self.wi_1 = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32)
@@ -381,10 +336,20 @@ class SwitchRouterLayer(nn.Module):
         self.linear = nn.Linear(self.config.d_model, self.config.n_experts)
         self.softmax = nn.Softmax(dim=-1)
 
+    # Define getters, MUST call getters after forward
+    def get_expert_gate(self):
+        return self.expert_gate
+    def get_expert_mask(self):
+        return self.expert_mask
+    def get_router_probs(self):
+        return self.router_probs
+    def get_tokens_per_core(self):
+        return self.tokens_per_core
+
     def forward(self, inputs: torch.Tensor):
         ### Define Shapes ###
         batch_size, seq_len, d_model = inputs.shape
-        num_cores = self.config.get("NUM_SHARDS") # world_size
+        num_cores = self.config.num_shards # world_size
         tokens_per_core = int(batch_size * seq_len / num_cores)
         expert_capacity = int(self.config.capacity_factor * tokens_per_core * num_cores / self.config.n_experts)
         inputs = inputs.reshape([num_cores, tokens_per_core, d_model])
@@ -412,10 +377,16 @@ class SwitchRouterLayer(nn.Module):
 
         # mask out token that don't fit within expert capacity
         expert_gate *= expert_mask_flat
-
-        # combine_tensor: (n_cores, n_tokens, n_experts, expert_capacity)
-        combine_tensor = expert_gate.reshape(num_cores, tokens_per_core, 1, 1) * expert_mask_flat.reshape(num_cores, tokens_per_core, 1, 1) * F.one_hot(expert_index, num_classes=self.config.n_experts).unsqueeze(3) * F.one_hot(position_in_expert, num_classes=expert_capacity)
+        combine_tensor = expert_gate.reshape(num_cores, tokens_per_core, 1, 1) * expert_mask_flat.reshape(num_cores, tokens_per_core, 1, 1) * F.one_hot(expert_index, num_classes=self.config.n_experts).unsqueeze(3) * F.one_hot(position_in_expert, num_classes=expert_capacity+1)
         dispatch_tensor = combine_tensor.bool()
+
+        # Referencing variables as class variables for LB Loss (via getters)
+        self.expert_gate = expert_gate
+        self.expert_mask = expert_mask
+        self.router_probs = router_probs
+        self.tokens_per_core = tokens_per_core
+
+        # Return only the Dispatch Tensor and Combine Tensor
         return dispatch_tensor, combine_tensor
 
 class SwitchLayerFF(nn.Module):
@@ -432,39 +403,60 @@ class SwitchLayerFF(nn.Module):
 
     def forward(self, inputs: torch.Tensor):
         # mixed precision
+        batch_size, seq_len, d_model = inputs.shape
         inputs = inputs.to(torch.float32)
         inputs = inputs * torch.FloatTensor(inputs.shape).uniform_(1 - self.epsilon,  1 + self.epsilon)
         inputs = self.layer_norm(inputs)
+        num_cores = self.config.num_shards
+        if self.config.xla_found:
+            import torch_xla.core.xla_model as xm
+            import torch_xla.core.functions as xf
+            self.device = xm.xla_device()
 
         dispatch_tensor, combine_tensor = self.router_layer(inputs)
         # expert_inputs: (n_experts, n_cores, expert_capacity, d_model)
 
         expert_inputs = torch.einsum("btm,btxc->xbcm", inputs, dispatch_tensor.float())
-        breakpoint()
-        # TODO add all-to-all
-        if self.config.get("xla_found"):
-            import torch_xla.core.xla_model as xm
-            xm.all_to_all(output, input)
 
+        if self.config.xla_found:
+            
+            expert_inputs = expert_inputs.to(self.device)
+            # Differentiable all_to_all
+            xf.all_to_all(
+            expert_inputs,
+            split_dimension=0, #[batch, seq len, d model] −> [num cores, tokens per core, d model]
+            concat_dimension=0,
+            split_count=num_cores)
         ### Perform Expert Forward ###
         expert_outputs = self.experts(expert_inputs)
 
+        transformer_output = torch.einsum("bsne,nbed->bsd", combine_tensor.float(), expert_outputs)
         # experts_out: expert_capacity, n_experts, d_model; combine_tensor: expert_capacity, n_experts
-        final_output = torch.einsum('xbcm,btxc->btm', expert_outputs, combine_tensor.float())
 
         # TODO add another all-to-all
+        if self.config.xla_found:
+            transformer_output = transformer_output.to(self.device)
+            xf.all_to_all(
+            transformer_output,
+            split_dimension=0, #[batch, seq len, d model] −> [num cores, tokens per core, d model]
+            concat_dimension=0,
+            split_count=num_cores)
 
-        final_output = final_output.view(batch_size, seq_len, d_model)
-        # TODO fix these
+        final_output = transformer_output.view(batch_size, seq_len, d_model)
+        
+        expert_mask = self.router_layer.get_expert_mask()
+        tokens_per_core = self.router_layer.get_tokens_per_core()
+        router_probs = self.router_layer.get_router_probs()
+        expert_gate = self.router_layer.get_expert_gate()
+
         nb_tokens_routed_per_expert = expert_mask.sum(dim=1)
-        dropped_tokens = num_tokens_per_core - expert_mask.sum()
-
-        inputs = inputs + self.dropout(final_output)
+        dropped_tokens = tokens_per_core - expert_mask.sum()
+        final_output = final_output + self.dropout(final_output)
         return (
-            inputs,
+            final_output,
             nb_tokens_routed_per_expert,
             router_probs.sum(0),
-            nb_dropped_tokens,
+            dropped_tokens,
             expert_gate,
         )
 
@@ -1233,7 +1225,7 @@ class SwitchStack(SwitchPreTrainedModel):
             torch.stack(sum_prob_per_expert),
             nb_dropped_tokens,
             torch.stack(expert_gate),
-        )       
+        )
 
         # Add last layer
         if output_hidden_states:
