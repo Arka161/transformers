@@ -408,6 +408,10 @@ class SwitchLayerFF(nn.Module):
         inputs = inputs * torch.FloatTensor(inputs.shape).uniform_(1 - self.epsilon,  1 + self.epsilon)
         inputs = self.layer_norm(inputs)
         num_cores = self.config.num_shards
+        if self.config.xla_found:
+            import torch_xla.core.xla_model as xm
+            import torch_xla.core.functions as xf
+            self.device = xm.xla_device()
 
         dispatch_tensor, combine_tensor = self.router_layer(inputs)
         # expert_inputs: (n_experts, n_cores, expert_capacity, d_model)
@@ -415,8 +419,8 @@ class SwitchLayerFF(nn.Module):
         expert_inputs = torch.einsum("btm,btxc->xbcm", inputs, dispatch_tensor.float())
 
         if self.config.xla_found:
-            import torch_xla.core.functions as xf
-
+            
+            expert_inputs = expert_inputs.to(self.device)
             # Differentiable all_to_all
             xf.all_to_all(
             expert_inputs,
@@ -431,8 +435,7 @@ class SwitchLayerFF(nn.Module):
 
         # TODO add another all-to-all
         if self.config.xla_found:
-            import torch_xla.core.functions as xf
-
+            transformer_output = transformer_output.to(self.device)
             xf.all_to_all(
             transformer_output,
             split_dimension=0, #[batch, seq len, d model] −> [num cores, tokens per core, d model]
