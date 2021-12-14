@@ -337,12 +337,19 @@ class SwitchRouterLayer(nn.Module):
         self.softmax = nn.Softmax(dim=-1)
 
     # Define getters, MUST call getters after forward
+    @property
     def get_expert_gate(self):
         return self.expert_gate
+
+    @property
     def get_expert_mask(self):
         return self.expert_mask
+
+    @property
     def get_router_probs(self):
         return self.router_probs
+
+    @property
     def get_tokens_per_core(self):
         return self.tokens_per_core
 
