@@ -381,14 +381,21 @@ class SwitchRouterLayer(nn.Module):
         self.linear = nn.Linear(self.config.d_model, self.config.n_experts)
         self.softmax = nn.Softmax(dim=-1)
 
+    def compute_load_balancing_loss(self, router_probs, expert_mask):
+        # Get proportion of tokens routed to each expert, TODO reduce across cores
+        density1 = torch.mean(expert_mask.float(), dim=1)
+        density1_proxy = torch.mean(router_probs, dim=1)
+        loss = (density1 * density1_proxy) * (self.config.n_experts ** 2)
+
+        return loss
+
     def forward(self, inputs: torch.Tensor):
         ### Define Shapes ###
         batch_size, seq_len, d_model = inputs.shape
-        num_cores = self.config.get("NUM_SHARDS") # world_size
+        num_cores = self.config.NUM_SHARDS # world_size
         tokens_per_core = int(batch_size * seq_len / num_cores)
         expert_capacity = int(self.config.capacity_factor * tokens_per_core * num_cores / self.config.n_experts)
         inputs = inputs.reshape([num_cores, tokens_per_core, d_model])
-
         ### Perform Routing ###
         # router_probs: (n_cores, n_tokens, n_experts)
         router_logits = self.linear(inputs)
@@ -400,11 +407,11 @@ class SwitchRouterLayer(nn.Module):
 
         # expert mask: (n_cores, n_tokens, n_experts)
         expert_mask = torch.nn.functional.one_hot(expert_index, num_classes=self.config.n_experts)
-
+        aux_loss = self.compute_load_balancing_loss(router_probs, expert_mask)
         position_in_expert = torch.cumsum(expert_mask, dim=1) * expert_mask
 
         # Drop tokens that don't fit in expert capacity.
-        expert_mask *= torch.less(position_in_expert, expert_capacity + 1)
+        expert_mask *= torch.less(position_in_expert, expert_capacity)
         expert_mask_flat = torch.sum(expert_mask, dim=-1)
 
         # recompute position_in_expert with fewer tokens
@@ -416,7 +423,7 @@ class SwitchRouterLayer(nn.Module):
         # combine_tensor: (n_cores, n_tokens, n_experts, expert_capacity)
         combine_tensor = expert_gate.reshape(num_cores, tokens_per_core, 1, 1) * expert_mask_flat.reshape(num_cores, tokens_per_core, 1, 1) * F.one_hot(expert_index, num_classes=self.config.n_experts).unsqueeze(3) * F.one_hot(position_in_expert, num_classes=expert_capacity)
         dispatch_tensor = combine_tensor.bool()
-        return dispatch_tensor, combine_tensor
+        return dispatch_tensor, combine_tensor, aux_loss
 
 class SwitchLayerFF(nn.Module):
     def __init__(self, config: SwitchConfig):
@@ -433,16 +440,20 @@ class SwitchLayerFF(nn.Module):
     def forward(self, inputs: torch.Tensor):
         # mixed precision
         inputs = inputs.to(torch.float32)
+        batch_size, seq_len, d_model = inputs.shape
+        num_cores = self.config.NUM_SHARDS # world_size
+        tokens_per_core = int(batch_size * seq_len / num_cores)
+
+        inputs = inputs.reshape([num_cores, tokens_per_core, d_model])
         inputs = inputs * torch.FloatTensor(inputs.shape).uniform_(1 - self.epsilon,  1 + self.epsilon)
         inputs = self.layer_norm(inputs)
 
-        dispatch_tensor, combine_tensor = self.router_layer(inputs)
+        dispatch_tensor, combine_tensor, aux_loss = self.router_layer(inputs)
         # expert_inputs: (n_experts, n_cores, expert_capacity, d_model)
-
+        # inputs: (batch, tokens, model)
         expert_inputs = torch.einsum("btm,btxc->xbcm", inputs, dispatch_tensor.float())
-        breakpoint()
-        # TODO add all-to-all
-        if self.config.get("xla_found"):
+
+        if self.config.xla_found:
             import torch_xla.core.xla_model as xm
             xm.all_to_all(output, input)
 
@@ -450,22 +461,19 @@ class SwitchLayerFF(nn.Module):
         expert_outputs = self.experts(expert_inputs)
 
         # experts_out: expert_capacity, n_experts, d_model; combine_tensor: expert_capacity, n_experts
+        # final_output: (batch, tokens, d_model)
         final_output = torch.einsum('xbcm,btxc->btm', expert_outputs, combine_tensor.float())
 
-        # TODO add another all-to-all
+        if self.config.xla_found:
+            import torch_xla.core.xla_model as xm
+            xm.all_to_all(output, input)
 
         final_output = final_output.view(batch_size, seq_len, d_model)
-        # TODO fix these
-        nb_tokens_routed_per_expert = expert_mask.sum(dim=1)
-        dropped_tokens = num_tokens_per_core - expert_mask.sum()
 
-        inputs = inputs + self.dropout(final_output)
+        output = inputs.reshape(batch_size, seq_len, d_model) + self.dropout(final_output)
         return (
-            inputs,
-            nb_tokens_routed_per_expert,
-            router_probs.sum(0),
-            nb_dropped_tokens,
-            expert_gate,
+            output,
+            aux_loss
         )
 
 
@@ -855,12 +863,8 @@ class SwitchBlock(nn.Module):
             attention_outputs = attention_outputs + cross_attention_outputs[2:]
 
         # Apply Feed Forward layer
-        # counts, route_prob.sum(0), len(dropped), expert_gate
-        hidden_states, counts, route_prob, n_dropped, expert_gate = self.layer[-1](hidden_states)
-        self.counts = counts
-        self.route_prob = route_prob
-        self.n_dropped = n_dropped
-        self.expert_gate = expert_gate
+        hidden_states, aux_losses = self.layer[-1](hidden_states)
+
         # clamp inf values to enable fp16 training
         if hidden_states.dtype == torch.float16 and torch.isinf(hidden_states).any():
             clamp_value = torch.finfo(hidden_states.dtype).max - 1000
@@ -872,8 +876,7 @@ class SwitchBlock(nn.Module):
             outputs = outputs + (present_key_value_state,) + attention_outputs
         else:
             outputs = outputs + attention_outputs
-        outputs = outputs + ((counts, route_prob, n_dropped, expert_gate),)
-        # Return counts, route_prob, n_dropped, expert_gate
+        outputs = outputs + (aux_losses,)
         return outputs  # hidden-states, present_key_value_states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
 
 class SwitchPreTrainedModel(PreTrainedModel):
@@ -1119,9 +1122,8 @@ class SwitchStack(SwitchPreTrainedModel):
         all_cross_attentions = () if (output_attentions and self.is_decoder) else None
         position_bias = None
         encoder_decoder_position_bias = None
-
+        aux_losses = []
         hidden_states = self.dropout(inputs_embeds)
-        nb_tokens_routed_per_expert, sum_prob_per_expert, nb_dropped_tokens, expert_gate = [], [], [], []
         for i, (layer_module, past_key_value) in enumerate(zip(self.block, past_key_values)):
             layer_head_mask = head_mask[i]
             cross_attn_layer_head_mask = cross_attn_head_mask[i]
@@ -1185,17 +1187,7 @@ class SwitchStack(SwitchPreTrainedModel):
                     use_cache=use_cache,
                     output_attentions=output_attentions,
                 )
-
-            (
-                one_block_nb_tokens_routed_per_expert,
-                one_block_sum_prob_per_expert,
-                one_block_nb_dropped_tokens,
-                one_block_expert_gate,
-            ) = layer_outputs[-1]
-            nb_tokens_routed_per_expert.append(one_block_nb_tokens_routed_per_expert)
-            sum_prob_per_expert.append(one_block_sum_prob_per_expert)
-            nb_dropped_tokens.append(one_block_nb_dropped_tokens)
-            expert_gate.append(one_block_expert_gate)
+            aux_losses.append(layer_outputs[-1])
 
             # layer_outputs is a tuple with:
             # hidden-states, key-value-states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
@@ -1228,13 +1220,6 @@ class SwitchStack(SwitchPreTrainedModel):
         hidden_states = self.final_layer_norm(hidden_states)
         hidden_states = self.dropout(hidden_states)
 
-        switch_return_for_all_blocks = (
-            torch.stack(nb_tokens_routed_per_expert),
-            torch.stack(sum_prob_per_expert),
-            nb_dropped_tokens,
-            torch.stack(expert_gate),
-        )       
-
         # Add last layer
         if output_hidden_states:
             all_hidden_states = all_hidden_states + (hidden_states,)
@@ -1252,7 +1237,7 @@ class SwitchStack(SwitchPreTrainedModel):
                     ]
                     if v is not None
                 )
-                + (switch_return_for_all_blocks,)
+                + (aux_losses,)
             )
         return (
             BaseModelOutputWithPastAndCrossAttentions(
@@ -1262,7 +1247,7 @@ class SwitchStack(SwitchPreTrainedModel):
                 attentions=all_attentions,
                 cross_attentions=all_cross_attentions,
             ),
-            switch_return_for_all_blocks,
+            aux_losses,
         )
 
 
@@ -1774,10 +1759,10 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict,
             )
-            encoder_experts_output = encoder_outputs[-1]
+            encoder_aux_losses = encoder_outputs[-1]
             encoder_outputs = encoder_outputs[0]
         elif return_dict and not isinstance(encoder_outputs[0], BaseModelOutput):
-            encoder_experts_output = encoder_outputs[-1]
+            encoder_aux_losses = encoder_outputs[-1]
             encoder_outputs = BaseModelOutput(
                 last_hidden_state=encoder_outputs[0][0],
                 hidden_states=encoder_outputs[0][1] if len(encoder_outputs[0]) > 1 else None,
@@ -1819,7 +1804,7 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
-        decoder_experts_output = decoder_outputs[-1]
+        decoder_aux_losses = decoder_outputs[-1]
         decoder_outputs = decoder_outputs[0]
         sequence_output = decoder_outputs[0]
 
@@ -1835,26 +1820,13 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
             sequence_output = sequence_output * (self.model_dim ** -0.5)
 
         lm_logits = self.lm_head(sequence_output)
-        # stack up encoder and decoder experts
-        stacked_nb_tokens_routed_per_expert = torch.stack((encoder_experts_output[0].sum(dim=1), decoder_experts_output[0].sum(dim=1)))
-        stacked_sum_prob_per_expert = torch.stack((encoder_experts_output[1].sum(dim=1), decoder_experts_output[1].sum(dim=1)))
-        # stacked_nb_dropped_tokens = encoder_experts_output[2] + decoder_experts_output[2]
-        # stacked_expert_gate = torch.stack((encoder_experts_output[3], decoder_experts_output[3]))
-        total_nb_processed_tokens = stacked_nb_tokens_routed_per_expert.sum(dim=-1, keepdims=True)
-        fraction_tokens_routed = stacked_nb_tokens_routed_per_expert / total_nb_processed_tokens
-        mean_routing_prob = stacked_sum_prob_per_expert / total_nb_processed_tokens
-        load_balancing_loss = (self.config.n_experts * 2) * (fraction_tokens_routed * mean_routing_prob).sum()
         loss = None
         if labels is not None:
-            # We require : counts, route_prob.sum(0), len(dropped), expert_gate for load balancing loss
             # TODO add load balancing loss
             loss_fct = CrossEntropyLoss(ignore_index=-100)
             loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
-            lb_loss = self.config.load_balancing_loss_ceof * load_balancing_loss
-            loss += lb_loss
-            #print("Switch Loss shape", loss.shape)
+            loss = loss + self.config.load_balancing_loss_ceof * (torch.stack(encoder_aux_losses).sum() + torch.stack(decoder_aux_losses).sum())
             # TODO(thom): Add z_loss https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/layers.py#L666
-            # Loss -> z_loss + LBL
 
         if not return_dict:
             output = (lm_logits,) + decoder_outputs[1:] + encoder_outputs
