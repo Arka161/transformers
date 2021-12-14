@@ -12,12 +12,10 @@ class AllToAll(torch.autograd.Function):
     ctx.split_count = split_count
     ctx.groups = groups
     output = xm.all_to_all(inputs, split_dimension, concat_dimension, split_count, groups)
-    #print(f"AllToAll forward. output.shape: {output.shape}")
     return output
 
   @staticmethod
   def backward(ctx, grad_outputs):
-    #print(f"AllToAll backward.grad_outputs: {grad_outputs.shape}")
     return AllToAll.apply(grad_outputs, ctx.concat_dimension, ctx.split_dimension, ctx.split_count, ctx.groups), None, None, None, None
 
 def all_to_all(input, split_dimension, concat_dimension, split_count, groups=None):
