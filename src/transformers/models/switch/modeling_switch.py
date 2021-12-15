@@ -327,10 +327,13 @@ def populate_module_list_with_clones(module: nn.Module, nb_clones: int) -> nn.Mo
 
 
 class SwitchExpertsLayer(nn.Module):
-    def __init__(self, config: SwitchConfig):
+    def __init__(self, config: SwitchConfig, layer_id):
         super().__init__()
         self.epsilon = 1e-6
         self.config = config
+        self.layer_id = layer_id
+        # set seed to unique value to initialize experts
+        torch.manual_seed(self.config.seed * layer_id * 10000)
         if config.feed_forward_proj == "relu":
             self.act = nn.ReLU()
             self.wi = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32)
@@ -350,6 +353,9 @@ class SwitchExpertsLayer(nn.Module):
             raise ValueError(
                 f"{self.config.feed_forward_proj} is not supported. Choose between `relu` and `gated-gelu`"
             )
+        # reset seed to default
+        torch.manual_seed(self.config.seed)
+
         self.layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
 
@@ -426,16 +432,16 @@ class SwitchRouterLayer(nn.Module):
         return dispatch_tensor, combine_tensor, aux_loss
 
 class SwitchLayerFF(nn.Module):
-    def __init__(self, config: SwitchConfig):
+    def __init__(self, config: SwitchConfig, layer_id):
         super().__init__()
         self.epsilon = 1e-6
+        self.layer_id = layer_id
         self.config = config
         self.router = nn.Linear(self.config.d_model, self.config.n_experts)
         self.layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
         self.router_layer = SwitchRouterLayer(config)
-        # TODO ensure this is uniquely parameterized
-        self.experts = SwitchExpertsLayer(config)
+        self.experts = SwitchExpertsLayer(config, layer_id)
 
     def forward(self, inputs: torch.Tensor):
         # mixed precision
@@ -770,14 +776,15 @@ class SwitchLayerCrossAttention(nn.Module):
 
 
 class SwitchBlock(nn.Module):
-    def __init__(self, config, has_relative_attention_bias=False):
+    def __init__(self, config, layer_id, has_relative_attention_bias=False):
         super().__init__()
+        self.layer_id = layer_id
         self.is_decoder = config.is_decoder
         self.layer = nn.ModuleList()
         self.layer.append(SwitchLayerSelfAttention(config, has_relative_attention_bias=has_relative_attention_bias))
         if self.is_decoder:
             self.layer.append(SwitchLayerCrossAttention(config))
-        self.layer.append(SwitchLayerFF(config))
+        self.layer.append(SwitchLayerFF(config, layer_id))
 
     def forward(
         self,
@@ -983,7 +990,7 @@ class SwitchStack(SwitchPreTrainedModel):
         self.is_decoder = config.is_decoder
 
         self.block = nn.ModuleList(
-           [SwitchBlock(config, has_relative_attention_bias=bool(i == 0)) for i in range(config.num_layers)]
+           [SwitchBlock(config, i, has_relative_attention_bias=bool(i == 0)) for i in range(config.num_layers)]
         )
 
         self.final_layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
