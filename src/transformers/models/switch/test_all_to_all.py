@@ -3,7 +3,7 @@ import torch
 import torch_xla
 import torch_xla.core.xla_model as xm
 import torch_xla.distributed.xla_multiprocessing as xmp
-import torch_xla.core.functions as xf
+from dist import all_to_all
 
 def assert_stats(expected, result, slots_per_device, i):
     try:
@@ -16,17 +16,34 @@ def assert_stats(expected, result, slots_per_device, i):
 def _mp_fn(index):
   device = xm.xla_device()
   if xm.xla_device_hw(device) == 'TPU':
-    slots_per_device = 4
-    size = slots_per_device * xm.xrt_world_size()
+
+    n_cores = xm.xrt_world_size()
     ordinal = xm.get_ordinal()
-    value = torch.tensor([ordinal] * size, dtype=torch.int32, device=device)
-    result_tensor = xf.all_to_all(
-        value,
-        split_dimension=0,
+    d_model = 1
+    expert_capacity = 2
+    n_cores = 8
+    n_experts = 8
+    expert_inputs = ordinal * torch.ones([n_experts, n_cores, expert_capacity, d_model], dtype=torch.int32, device=device)
+    if index == 1:
+        print(expert_inputs.shape)
+
+    result_tensor = all_to_all(
+        expert_inputs,
+        split_dimension=1,
         concat_dimension=0,
         split_count=xm.xrt_world_size())
+    result_tensor *= ordinal
 
-    result = result_tensor.cpu().tolist()
+    result_cpu = result_tensor.cpu()
+    if index == 1:
+        print(result_cpu.shape)
+
+    result_tensor = all_to_all(result_tensor, split_dimension=0, concat_dimension=1, split_count=xm.xrt_world_size())
+    result_cpu = result_tensor.cpu()
+    if index == 1:
+        print(result_cpu.shape)
+        print(result_cpu)
+
     for i in range(0, xm.xrt_world_size()):
       expected = [i] * slots_per_device
       assert_stats(expected, result, slots_per_device, i)

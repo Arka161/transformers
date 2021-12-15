@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
-
+import torch_xla.core.xla_model as xm
 
 class AllToAll(torch.autograd.Function):
 

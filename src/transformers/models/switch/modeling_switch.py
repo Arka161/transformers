@@ -450,12 +450,12 @@ class SwitchLayerFF(nn.Module):
 
         dispatch_tensor, combine_tensor, aux_loss = self.router_layer(inputs)
         # expert_inputs: (n_experts, n_cores, expert_capacity, d_model)
-        # inputs: (batch, tokens, model)
+        # inputs: (batch, tokens, model_dim)
         expert_inputs = torch.einsum("btm,btxc->xbcm", inputs, dispatch_tensor.float())
 
         if self.config.xla_found:
-            import torch_xla.core.xla_model as xm
-            xm.all_to_all(output, input)
+            from dist import all_to_all
+            all_to_all(expert_inputs, split_dimension=1, concat_dimension=0, split_count=num_cores)
 
         ### Perform Expert Forward ###
         expert_outputs = self.experts(expert_inputs)
@@ -465,8 +465,8 @@ class SwitchLayerFF(nn.Module):
         final_output = torch.einsum('xbcm,btxc->btm', expert_outputs, combine_tensor.float())
 
         if self.config.xla_found:
-            import torch_xla.core.xla_model as xm
-            xm.all_to_all(output, input)
+            from dist import all_to_all
+            all_to_all(final_output, split_dimension=0, concat_dimension=1, split_count=num_cores)
 
         final_output = final_output.view(batch_size, seq_len, d_model)
 
@@ -1077,7 +1077,7 @@ class SwitchStack(SwitchPreTrainedModel):
         if inputs_embeds is None:
             assert self.embed_tokens is not None, "You have to initialize the model with valid token embeddings"
             inputs_embeds = self.embed_tokens(input_ids)
-
+        breakpoint()
         batch_size, seq_length = input_shape
 
         # required mask seq length can be calculated via length of past
