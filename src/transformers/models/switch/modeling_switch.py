@@ -1084,7 +1084,7 @@ class SwitchStack(SwitchPreTrainedModel):
         if inputs_embeds is None:
             assert self.embed_tokens is not None, "You have to initialize the model with valid token embeddings"
             inputs_embeds = self.embed_tokens(input_ids)
-        breakpoint()
+
         batch_size, seq_length = input_shape
 
         # required mask seq length can be calculated via length of past
