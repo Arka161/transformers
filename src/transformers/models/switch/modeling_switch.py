@@ -320,6 +320,7 @@ class SwitchExpertsLayer(nn.Module):
         if self.config.feed_forward_proj == "relu":
             # self.wi: (n_experts, d_model, d_ff)
             # layer1_out: (expert_capacity, n_experts, d_ff)
+            print(f"self.wi.device: {self.wi.device}")
             layer1_out = torch.einsum('xmf,xbcm->xbcf', self.wi, expert_inputs)
             out = self.act(layer1_out)
             out = self.dropout(out)
@@ -397,13 +398,13 @@ class SwitchLayerFF(nn.Module):
         self.layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
         self.router_layer = SwitchRouterLayer(config)
-        self.experts = SwitchExpertsLayer(config, layer_id)
 
     def forward(self, inputs: torch.Tensor):
         # mixed precision
         print(f"SwitchLayerFF - before : {inputs.device}")
         inputs = inputs.to(torch.float32)
         print(f"SwitchLayerFF - after : {inputs.device}")
+        self.experts = SwitchExpertsLayer(config, layer_id).to(inputs.device)
 
         batch_size, seq_len, d_model = inputs.shape
         num_cores = self.config.NUM_SHARDS # world_size
@@ -426,7 +427,7 @@ class SwitchLayerFF(nn.Module):
         print(f"SwitchLayerFF - expert_inputs after : {expert_inputs.device}")
 
         ### Perform Expert Forward ###
-        expert_outputs = self.experts(expert_inputs.to())
+        expert_outputs = self.experts(expert_inputs)
 
         # experts_out: expert_capacity, n_experts, d_model; combine_tensor: expert_capacity, n_experts
         # final_output: (batch, tokens, d_model)
