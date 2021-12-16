@@ -415,7 +415,7 @@ class SwitchLayerFF(nn.Module):
         tokens_per_core = int(batch_size * seq_len / num_cores)
 
         inputs = inputs.reshape([num_cores, tokens_per_core, d_model])
-        inputs = inputs * torch.FloatTensor(inputs.shape).uniform_(1 - self.epsilon,  1 + self.epsilon)
+        inputs = inputs * torch.zeros_like(inputs, device=inputs.device).uniform_(1 - self.epsilon,  1 + self.epsilon)
         inputs = self.layer_norm(inputs)
 
         dispatch_tensor, combine_tensor, aux_loss = self.router_layer(inputs)
