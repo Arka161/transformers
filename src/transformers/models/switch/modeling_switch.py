@@ -416,7 +416,7 @@ class SwitchLayerFF(nn.Module):
         expert_inputs = torch.einsum("btm,btxc->xbcm", inputs, dispatch_tensor.float())
 
         if self.config.xla_found:
-            from dist import all_to_all
+            from .dist import all_to_all
             all_to_all(expert_inputs, split_dimension=1, concat_dimension=0, split_count=num_cores)
 
         ### Perform Expert Forward ###
@@ -427,7 +427,7 @@ class SwitchLayerFF(nn.Module):
         final_output = torch.einsum('xbcm,btxc->btm', expert_outputs, combine_tensor.float())
 
         if self.config.xla_found:
-            from dist import all_to_all
+            from .dist import all_to_all
             all_to_all(final_output, split_dimension=0, concat_dimension=1, split_count=num_cores)
 
         final_output = final_output.view(batch_size, seq_len, d_model)
