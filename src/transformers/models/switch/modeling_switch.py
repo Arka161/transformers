@@ -290,18 +290,20 @@ class SwitchExpertsLayer(nn.Module):
         self.layer_id = layer_id
         # set seed to unique value to initialize experts
         torch.manual_seed(self.config.seed * layer_id * 10000)
+        self.device = xm.xla_device() if config.xla_found else torch.device('cpu')
+
         if config.feed_forward_proj == "relu":
             self.act = nn.ReLU()
-            self.wi = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32)
-            self.wo = torch.zeros([self.config.n_experts, self.config.d_ff,  self.config.d_model], dtype=torch.float32)
-            self.wi.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
+            self.wi = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
+            self.wo = torch.zeros([self.config.n_experts, self.config.d_ff,  self.config.d_model], dtype=torch.float32, device=self.device)
+            self.wi.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5), )
             self.wo.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_ff) ** -0.5))
         elif config.feed_forward_proj == "gated-gelu":
             # TODO : replace SwitchDenseGatedGeluDense with an einsum implementation
             self.act = ACT2FN["gelu_new"]
-            self.wi_0 = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32)
-            self.wi_1 = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32)
-            self.wo = torch.zeros([self.config.n_experts, self.config.d_ff,  self.config.d_model], dtype=torch.float32)
+            self.wi_0 = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
+            self.wi_1 = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
+            self.wo = torch.zeros([self.config.n_experts, self.config.d_ff,  self.config.d_model], dtype=torch.float32, device=self.devie)
             self.wi_0.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
             self.wi_1.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
             self.wo.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_ff) ** -0.5))
