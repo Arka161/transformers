@@ -290,7 +290,11 @@ class SwitchExpertsLayer(nn.Module):
         self.layer_id = layer_id
         # set seed to unique value to initialize experts
         torch.manual_seed(self.config.seed * layer_id * 10000)
-        self.device = xm.xla_device() if config.xla_found else torch.device('cpu')
+        try:
+            import torch_xla.core.xla_model as xm
+            self.device = xm.xla_device()
+        except Exception as e:
+            self.device = torch.device('cpu')
 
         if config.feed_forward_proj == "relu":
             self.act = nn.ReLU()
