@@ -398,13 +398,14 @@ class SwitchLayerFF(nn.Module):
         self.layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
         self.router_layer = SwitchRouterLayer(config)
+        self.experts = SwitchExpertsLayer(config, layer_id).to()
 
     def forward(self, inputs: torch.Tensor):
         # mixed precision
         print(f"SwitchLayerFF - before : {inputs.device}")
         inputs = inputs.to(torch.float32)
         print(f"SwitchLayerFF - after : {inputs.device}")
-        self.experts = SwitchExpertsLayer(config, layer_id).to(inputs.device)
+        self.experts.to(inputs.device)
 
         batch_size, seq_len, d_model = inputs.shape
         num_cores = self.config.NUM_SHARDS # world_size
