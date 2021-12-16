@@ -283,13 +283,12 @@ class MustDenseGatedGeluDense(nn.Module):
         return hidden_states
 
 class MustExpertsLayer(nn.Module):
-    def __init__(self, config: MustConfig, layer_id):
+    def __init__(self, config: MustConfig):
         super().__init__()
         self.epsilon = 1e-6
         self.config = config
-        self.layer_id = layer_id
         # set seed to unique value to initialize experts
-        torch.manual_seed(self.config.seed * layer_id * 10000)
+        torch.manual_seed(self.config.seed * self.config.GLOBAL_RANK)
         if config.feed_forward_proj == "relu":
             self.act = nn.ReLU()
             self.wi = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32)
@@ -388,16 +387,15 @@ class MustRouterLayer(nn.Module):
         return dispatch_tensor, combine_tensor, aux_loss
 
 class MustLayerFF(nn.Module):
-    def __init__(self, config: MustConfig, layer_id):
+    def __init__(self, config: MustConfig):
         super().__init__()
         self.epsilon = 1e-6
-        self.layer_id = layer_id
         self.config = config
         self.router = nn.Linear(self.config.d_model, self.config.n_experts)
         self.layer_norm = MustLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
         self.router_layer = MustRouterLayer(config)
-        self.experts = MustExpertsLayer(config, layer_id)
+        self.experts = MustExpertsLayer(config)
 
     def forward(self, inputs: torch.Tensor):
         # mixed precision
@@ -413,7 +411,7 @@ class MustLayerFF(nn.Module):
         dispatch_tensor, combine_tensor, aux_loss = self.router_layer(inputs)
         # expert_inputs: (n_experts, n_cores, expert_capacity, d_model)
         # inputs: (batch, tokens, model_dim)
-        expert_inputs = torch.einsum("btm,btxc->xbcm", inputs, dispatch_tensor.float())
+        expert_inputs = torch.einsum("bsm,ctxp->xcpm", inputs, dispatch_tensor.float())
 
         if self.config.xla_found:
             from .dist import all_to_all
@@ -424,7 +422,8 @@ class MustLayerFF(nn.Module):
 
         # experts_out: expert_capacity, n_experts, d_model; combine_tensor: expert_capacity, n_experts
         # final_output: (batch, tokens, d_model)
-        final_output = torch.einsum('xbcm,btxc->btm', expert_outputs, combine_tensor.float())
+        final_output = torch.einsum('xcpm,ctxp->ctm', expert_outputs, combine_tensor.float())
+
 
         if self.config.xla_found:
             from .dist import all_to_all
@@ -732,15 +731,15 @@ class MustLayerCrossAttention(nn.Module):
 
 
 class MustBlock(nn.Module):
-    def __init__(self, config, layer_id, has_relative_attention_bias=False):
+    def __init__(self, config, has_relative_attention_bias=False):
         super().__init__()
-        self.layer_id = layer_id
         self.is_decoder = config.is_decoder
         self.layer = nn.ModuleList()
+
         self.layer.append(MustLayerSelfAttention(config, has_relative_attention_bias=has_relative_attention_bias))
         if self.is_decoder:
             self.layer.append(MustLayerCrossAttention(config))
-        self.layer.append(MustLayerFF(config, layer_id))
+        self.layer.append(MustLayerFF(config))
 
     def forward(
         self,
@@ -944,9 +943,7 @@ class MustStack(MustPreTrainedModel):
 
         self.embed_tokens = embed_tokens
         self.is_decoder = config.is_decoder
-        self.block = nn.ModuleList(
-           [MustBlock(config, i, has_relative_attention_bias=bool(i == 0)) for i in range(config.num_layers)]
-        )
+        self.block = MustBlock(config, has_relative_attention_bias=True)
 
         self.final_layer_norm = MustLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
@@ -1017,7 +1014,7 @@ class MustStack(MustPreTrainedModel):
 
         # initialize past_key_values with `None` if past does not exist
         if past_key_values is None:
-            past_key_values = [None] * len(self.block)
+            past_key_values = [None] * self.config.num_timesteps
 
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
@@ -1035,8 +1032,8 @@ class MustStack(MustPreTrainedModel):
             encoder_extended_attention_mask = None
 
         # Prepare head mask if needed
-        head_mask = self.get_head_mask(head_mask, self.config.num_layers)
-        cross_attn_head_mask = self.get_head_mask(cross_attn_head_mask, self.config.num_layers)
+        head_mask = self.get_head_mask(head_mask, self.config.num_timesteps)
+        cross_attn_head_mask = self.get_head_mask(cross_attn_head_mask, self.config.num_timesteps)
         present_key_value_states = () if use_cache else None
         all_hidden_states = () if output_hidden_states else None
         all_attentions = () if output_attentions else None
@@ -1045,13 +1042,14 @@ class MustStack(MustPreTrainedModel):
         encoder_decoder_position_bias = None
         aux_losses = []
         hidden_states = self.dropout(inputs_embeds)
-        for i, (layer_module, past_key_value) in enumerate(zip(self.block, past_key_values)):
+        for i in range(self.config.num_timesteps):
+        # for i, (layer_module, past_key_value) in enumerate(zip(self.block, past_key_values)):
             layer_head_mask = head_mask[i]
             cross_attn_layer_head_mask = cross_attn_head_mask[i]
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
-            layer_outputs = layer_module(
+            layer_outputs = self.block(
                 hidden_states,
                 attention_mask=extended_attention_mask,
                 position_bias=position_bias,
@@ -1060,7 +1058,7 @@ class MustStack(MustPreTrainedModel):
                 encoder_decoder_position_bias=encoder_decoder_position_bias,
                 layer_head_mask=layer_head_mask,
                 cross_attn_layer_head_mask=cross_attn_layer_head_mask,
-                past_key_value=past_key_value,
+                past_key_value=past_key_values[i],
                 use_cache=use_cache,
                 output_attentions=output_attentions,
             )
@@ -1593,7 +1591,6 @@ class MustForConditionalGeneration(MustPreTrainedModel):
             if self.config.num_layers == self.config.num_decoder_layers:
                 warnings.warn(__HEAD_MASK_WARNING_MSG, FutureWarning)
                 decoder_head_mask = head_mask
-        breakpoint()
 
         # Encode if needed (training, first prediction pass)
         if encoder_outputs is None:
@@ -1728,7 +1725,7 @@ class MustForConditionalGeneration(MustPreTrainedModel):
         return reordered_decoder_past
 
 @add_start_docstrings("""Must Model with a `language modeling` head on top. """, MUST_START_DOCSTRING)
-class MustForConditionalGeneration(MustPreTrainedModel):
+class MustMustForConditionalGeneration(MustPreTrainedModel):
     _keys_to_ignore_on_load_missing = [
         r"encoder\.embed_tokens\.weight",
         r"decoder\.embed_tokens\.weight",
@@ -1763,30 +1760,6 @@ class MustForConditionalGeneration(MustPreTrainedModel):
         # Model parallel
         self.model_parallel = False
         self.device_map = None
-
-    @add_start_docstrings(PARALLELIZE_DOCSTRING)
-    def parallelize(self, device_map=None):
-        self.device_map = (
-            get_device_map(len(self.encoder.block), range(torch.cuda.device_count()))
-            if device_map is None
-            else device_map
-        )
-        assert_device_map(self.device_map, len(self.encoder.block))
-        self.encoder.parallelize(self.device_map)
-        self.decoder.parallelize(self.device_map)
-        self.lm_head = self.lm_head.to(self.decoder.first_device)
-        self.model_parallel = True
-
-    @add_start_docstrings(DEPARALLELIZE_DOCSTRING)
-    def deparallelize(self):
-        self.encoder.deparallelize()
-        self.decoder.deparallelize()
-        self.encoder = self.encoder.to("cpu")
-        self.decoder = self.decoder.to("cpu")
-        self.lm_head = self.lm_head.to("cpu")
-        self.model_parallel = False
-        self.device_map = None
-        torch.cuda.empty_cache()
 
     def get_input_embeddings(self):
         return self.shared
@@ -1887,9 +1860,6 @@ class MustForConditionalGeneration(MustPreTrainedModel):
 
         hidden_states = encoder_outputs[0]
 
-        if self.model_parallel:
-            torch.cuda.set_device(self.decoder.first_device)
-
         if labels is not None and decoder_input_ids is None and decoder_inputs_embeds is None:
             # get decoder inputs from shifting lm labels to the right
             decoder_input_ids = self._shift_right(labels)
@@ -1922,12 +1892,6 @@ class MustForConditionalGeneration(MustPreTrainedModel):
         )
 
         sequence_output = decoder_outputs[0]
-
-        # Set device for model parallelism
-        if self.model_parallel:
-            torch.cuda.set_device(self.encoder.first_device)
-            self.lm_head = self.lm_head.to(self.encoder.first_device)
-            sequence_output = sequence_output.to(self.lm_head.weight.device)
 
         if self.config.tie_word_embeddings:
             # Rescale output before projecting on vocab

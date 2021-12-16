@@ -409,19 +409,17 @@ class SwitchLayerFF(nn.Module):
         # mixed precision
         inputs = inputs.to(torch.float32)
         self.experts = self.experts.to(inputs.device)
-
         batch_size, seq_len, d_model = inputs.shape
         num_cores = self.config.NUM_SHARDS # world_size
-        tokens_per_core = int(batch_size * seq_len / num_cores)
 
-        inputs = inputs.reshape([num_cores, tokens_per_core, d_model])
         inputs = inputs * torch.zeros_like(inputs, device=inputs.device).uniform_(1 - self.epsilon,  1 + self.epsilon)
         inputs = self.layer_norm(inputs)
 
+        # dispatch: (n_cores, n_tokens, n_experts, expert_capacity)
         dispatch_tensor, combine_tensor, aux_loss = self.router_layer(inputs)
         # expert_inputs: (n_experts, n_cores, expert_capacity, d_model)
-        # inputs: (batch, tokens, model_dim)
-        expert_inputs = torch.einsum("btm,btxc->xbcm", inputs, dispatch_tensor.float())
+        # inputs: (batch, seq_len, model_dim)
+        expert_inputs = torch.einsum("bsm,ctxp->xcpm", inputs, dispatch_tensor.float())
 
         if self.config.xla_found:
             from .dist import all_to_all
@@ -432,7 +430,7 @@ class SwitchLayerFF(nn.Module):
 
         # experts_out: expert_capacity, n_experts, d_model; combine_tensor: expert_capacity, n_experts
         # final_output: (batch, tokens, d_model)
-        final_output = torch.einsum('xbcm,btxc->btm', expert_outputs, combine_tensor.float())
+        final_output = torch.einsum('xcpm,ctxp->ctm', expert_outputs, combine_tensor.float())
 
         if self.config.xla_found:
             from .dist import all_to_all
