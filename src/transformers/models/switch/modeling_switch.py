@@ -401,7 +401,12 @@ class SwitchLayerFF(nn.Module):
 
     def forward(self, inputs: torch.Tensor):
         # mixed precision
+        print(f"SwitchLayerFF - before : {inputs.device}")
         inputs = inputs.to(torch.float32)
+        print(f"SwitchLayerFF - after : {inputs.device}")
+        inputs = inputs.to(self.router.device)
+        print(f"SwitchLayerFF - tried to transfer : {inputs.device}")
+
         batch_size, seq_len, d_model = inputs.shape
         num_cores = self.config.NUM_SHARDS # world_size
         tokens_per_core = int(batch_size * seq_len / num_cores)
@@ -420,7 +425,7 @@ class SwitchLayerFF(nn.Module):
             all_to_all(expert_inputs, split_dimension=1, concat_dimension=0, split_count=num_cores)
 
         ### Perform Expert Forward ###
-        expert_outputs = self.experts(expert_inputs)
+        expert_outputs = self.experts(expert_inputs.to())
 
         # experts_out: expert_capacity, n_experts, d_model; combine_tensor: expert_capacity, n_experts
         # final_output: (batch, tokens, d_model)
