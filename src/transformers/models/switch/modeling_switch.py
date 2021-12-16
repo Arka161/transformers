@@ -405,7 +405,7 @@ class SwitchLayerFF(nn.Module):
         print(f"SwitchLayerFF - before : {inputs.device}")
         inputs = inputs.to(torch.float32)
         print(f"SwitchLayerFF - after : {inputs.device}")
-        self.experts.to(inputs.device)
+        self.experts = self.experts.to(inputs.device)
 
         batch_size, seq_len, d_model = inputs.shape
         num_cores = self.config.NUM_SHARDS # world_size
