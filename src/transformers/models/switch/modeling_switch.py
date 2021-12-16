@@ -326,7 +326,6 @@ class SwitchExpertsLayer(nn.Module):
         if self.config.feed_forward_proj == "relu":
             # self.wi: (n_experts, d_model, d_ff)
             # layer1_out: (expert_capacity, n_experts, d_ff)
-            print(f"self.wi.device: {self.wi.device}")
             layer1_out = torch.einsum('xmf,xbcm->xbcf', self.wi, expert_inputs)
             out = self.act(layer1_out)
             out = self.dropout(out)
@@ -408,9 +407,7 @@ class SwitchLayerFF(nn.Module):
 
     def forward(self, inputs: torch.Tensor):
         # mixed precision
-        print(f"SwitchLayerFF - before : {inputs.device}")
         inputs = inputs.to(torch.float32)
-        print(f"SwitchLayerFF - after : {inputs.device}")
         self.experts = self.experts.to(inputs.device)
 
         batch_size, seq_len, d_model = inputs.shape
