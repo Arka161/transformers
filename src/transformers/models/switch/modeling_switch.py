@@ -372,12 +372,14 @@ class SwitchRouterLayer(nn.Module):
         ### Perform Routing ###
         # router_probs: (n_cores, n_tokens, n_experts)
         router_logits = self.linear(inputs)
+        print(f"router_logits: {type(router_logits)")
         router_probs = self.softmax(router_logits)
+        print(f"router_probs: {type(router_probs)")
 
         ### Setup Expert Inputs and Dispatch tensor ###
         # expert_gate, expert_index: (n_cores n_tokens)
         expert_gate, expert_index = router_probs.max(dim=-1)
-
+        print(f"expert_index: {type(expert_index)")
         # expert mask: (n_cores, n_tokens, n_experts)
         expert_mask = torch.nn.functional.one_hot(expert_index, num_classes=self.config.n_experts)
         print(type(expert_mask))
