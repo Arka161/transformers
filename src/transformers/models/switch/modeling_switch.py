@@ -305,7 +305,7 @@ class SwitchExpertsLayer(nn.Module):
         elif config.feed_forward_proj == "gated-gelu":
             # TODO : replace SwitchDenseGatedGeluDense with an einsum implementation
             self.act = ACT2FN["gelu_new"]
-            self.wi_0 = torch.zeros([self.config.n_expert // self.config.NUM_SHARDSs, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
+            self.wi_0 = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
             self.wi_1 = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
             self.wo = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_ff,  self.config.d_model], dtype=torch.float32, device=self.devie)
             self.wi_0.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
@@ -362,7 +362,7 @@ class SwitchRouterLayer(nn.Module):
         batch_size, seq_len, d_model = inputs.shape
         num_cores = self.config.NUM_SHARDS # world_size
         tokens_per_core = int(batch_size * seq_len / num_cores)
-        expert_capacity = int(self.config.capacity_factor * tokens_per_core * num_cores / self.config.n_experts)
+        expert_capacity = int(self.config.capacity_factor * tokens_per_core * num_cores / (self.config.n_experts//self.config.NUM_SHARDS))
         inputs = inputs.reshape([num_cores, tokens_per_core, d_model])
         ### Perform Routing ###
         # router_probs: (n_cores, n_tokens, n_experts)
