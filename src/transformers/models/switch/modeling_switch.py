@@ -290,19 +290,24 @@ class SwitchExpertsLayer(nn.Module):
         self.layer_id = layer_id
         # set seed to unique value to initialize experts
         torch.manual_seed(self.config.seed * layer_id * 10000)
+        try:
+            import torch_xla.core.xla_model as xm
+            self.device = xm.xla_device()
+        except Exception as e:
+            self.device = torch.device('cpu')
 
         if config.feed_forward_proj == "relu":
             self.act = nn.ReLU()
-            self.wi = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_model, self.config.d_ff], dtype=torch.float32)
-            self.wo = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_ff,  self.config.d_model], dtype=torch.float32)
+            self.wi = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
+            self.wo = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_ff,  self.config.d_model], dtype=torch.float32, device=self.device)
             self.wi.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
             self.wo.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_ff) ** -0.5))
         elif config.feed_forward_proj == "gated-gelu":
             # TODO : replace SwitchDenseGatedGeluDense with an einsum implementation
             self.act = ACT2FN["gelu_new"]
-            self.wi_0 = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_model, self.config.d_ff], dtype=torch.float32)
-            self.wi_1 = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_model, self.config.d_ff], dtype=torch.float32)
-            self.wo = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_ff,  self.config.d_model], dtype=torch.float32)
+            self.wi_0 = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
+            self.wi_1 = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
+            self.wo = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_ff,  self.config.d_model], dtype=torch.float32, device=self.device)
             self.wi_0.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
             self.wi_1.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
             self.wo.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_ff) ** -0.5))
@@ -341,7 +346,12 @@ class SwitchRouterLayer(nn.Module):
         super().__init__()
         self.epsilon = 1e-6
         self.config = config
-        self.linear = nn.Linear(self.config.d_model, self.config.n_experts)
+        try:
+            import torch_xla.core.xla_model as xm
+            self.device = xm.xla_device()
+        except Exception as e:
+            self.device = torch.device('cpu')
+        self.linear = nn.Linear(self.config.d_model, self.config.n_experts, device=self.device)
         self.softmax = nn.Softmax(dim=-1)
 
     def compute_load_balancing_loss(self, router_probs, expert_mask):
@@ -394,18 +404,10 @@ class SwitchLayerFF(nn.Module):
         self.epsilon = 1e-6
         self.layer_id = layer_id
         self.config = config
-        self.router = nn.Linear(self.config.d_model, self.config.n_experts)
         self.layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
         self.router_layer = SwitchRouterLayer(config)
         self.experts = SwitchExpertsLayer(config, layer_id)
-        try:
-            import torch_xla.core.xla_model as xm
-            self.device = xm.xla_device()
-        except Exception as e:
-            self.device = torch.device('cpu')
-        self.router_layer = self.router_layer.to(self.device)
-        self.experts = self.experts.to(self.device)
 
     def forward(self, inputs: torch.Tensor):
         # mixed precision
