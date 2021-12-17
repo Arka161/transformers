@@ -372,17 +372,17 @@ class SwitchRouterLayer(nn.Module):
         ### Perform Routing ###
         # router_probs: (n_cores, n_tokens, n_experts)
         router_logits = self.linear(inputs)
-        print(f"router_logits: {router_logits.device}")
+        # print(f"router_logits: {router_logits.device}")
         router_probs = self.softmax(router_logits)
-        print(f"router_probs: {router_probs.device}")
+        # print(f"router_probs: {router_probs.device}")
 
         ### Setup Expert Inputs and Dispatch tensor ###
         # expert_gate, expert_index: (n_cores n_tokens)
         expert_gate, expert_index = router_probs.max(dim=-1)
-        print(f"expert_index: {expert_index.device}")
+        # print(f"expert_index: {expert_index.device}")
         # expert mask: (n_cores, n_tokens, n_experts)
         expert_mask = torch.nn.functional.one_hot(expert_index, num_classes=self.config.n_experts)
-        print(f"expert_mask: {expert_mask.device}")
+        # print(f"expert_mask: {expert_mask.device}")
         aux_loss = self.compute_load_balancing_loss(router_probs, expert_mask)
         position_in_expert = expert_mask.cumsum(dim=1) * expert_mask
 
@@ -414,7 +414,7 @@ class SwitchLayerFF(nn.Module):
 
     def forward(self, inputs: torch.Tensor):
         # mixed precision
-        print(f"inputs: {inputs.device}")
+        # print(f"inputs: {inputs.device}")
         inputs = inputs.to(torch.float32)
         batch_size, seq_len, d_model = inputs.shape
         num_cores = self.config.NUM_SHARDS # world_size
