@@ -297,16 +297,16 @@ class MustExpertsLayer(nn.Module):
 
         if config.feed_forward_proj == "relu":
             self.act = nn.ReLU()
-            self.wi = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
-            self.wo = torch.zeros([self.config.n_experts, self.config.d_ff,  self.config.d_model], dtype=torch.float32, device=self.device)
+            self.wi = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
+            self.wo = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_ff,  self.config.d_model], dtype=torch.float32, device=self.device)
             self.wi.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
             self.wo.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_ff) ** -0.5))
         elif config.feed_forward_proj == "gated-gelu":
             # TODO : replace MustDenseGatedGeluDense with an einsum implementation
             self.act = ACT2FN["gelu_new"]
-            self.wi_0 = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
-            self.wi_1 = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
-            self.wo = torch.zeros([self.config.n_experts, self.config.d_ff,  self.config.d_model], dtype=torch.float32, device=self.device)
+            self.wi_0 = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
+            self.wi_1 = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
+            self.wo = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_ff,  self.config.d_model], dtype=torch.float32, device=self.device)
             self.wi_0.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
             self.wi_1.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
             self.wo.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_ff) ** -0.5))
@@ -345,13 +345,18 @@ class MustRouterLayer(nn.Module):
         super().__init__()
         self.epsilon = 1e-6
         self.config = config
-        self.linear = nn.Linear(self.config.d_model, self.config.n_experts)
+        try:
+            import torch_xla.core.xla_model as xm
+            self.device = xm.xla_device()
+        except Exception as e:
+            self.device = torch.device('cpu')
+        self.linear = nn.Linear(self.config.d_model, self.config.n_experts, self.device)
         self.softmax = nn.Softmax(dim=-1)
 
     def compute_load_balancing_loss(self, router_probs, expert_mask):
         # Get proportion of tokens routed to each expert, TODO reduce across cores
-        density1 = torch.mean(expert_mask.float(), dim=1)
-        density1_proxy = torch.mean(router_probs, dim=1)
+        density1 = expert_mask.float().mean(dim=1)
+        density1_proxy = router_probs.mean(dim=1)
         loss = (density1 * density1_proxy) * (self.config.n_experts ** 2)
 
         return loss
@@ -361,7 +366,7 @@ class MustRouterLayer(nn.Module):
         batch_size, seq_len, d_model = inputs.shape
         num_cores = self.config.NUM_SHARDS # world_size
         tokens_per_core = int(batch_size * seq_len / num_cores)
-        expert_capacity = int(self.config.capacity_factor * tokens_per_core * num_cores / self.config.n_experts)
+        expert_capacity = int(self.config.capacity_factor * tokens_per_core * num_cores / (self.config.n_experts // self.config.num_shards))
         inputs = inputs.reshape([num_cores, tokens_per_core, d_model])
         ### Perform Routing ###
         # router_probs: (n_cores, n_tokens, n_experts)
@@ -370,19 +375,19 @@ class MustRouterLayer(nn.Module):
 
         ### Setup Expert Inputs and Dispatch tensor ###
         # expert_gate, expert_index: (n_cores n_tokens)
-        expert_gate, expert_index = torch.max(router_probs, dim=-1)
+        expert_gate, expert_index = router_probs.max(dim=-1)
 
         # expert mask: (n_cores, n_tokens, n_experts)
         expert_mask = torch.nn.functional.one_hot(expert_index, num_classes=self.config.n_experts)
         aux_loss = self.compute_load_balancing_loss(router_probs, expert_mask)
-        position_in_expert = torch.cumsum(expert_mask, dim=1) * expert_mask
+        position_in_expert = expert_mask.cumsum(dim=1) * expert_mask
 
         # Drop tokens that don't fit in expert capacity.
         expert_mask *= torch.less(position_in_expert, expert_capacity)
-        expert_mask_flat = torch.sum(expert_mask, dim=-1)
+        expert_mask_flat = expert_mask.sum(dim=-1)
 
         # recompute position_in_expert with fewer tokens
-        position_in_expert = torch.cumsum(expert_mask, dim=1) * expert_mask
+        position_in_expert = expert_mask.cumsum(dim=1) * expert_mask
 
         # mask out token that don't fit within expert capacity
         expert_gate *= expert_mask_flat
@@ -408,9 +413,7 @@ class MustLayerFF(nn.Module):
         inputs = inputs.to(torch.float32)
         batch_size, seq_len, d_model = inputs.shape
         num_cores = self.config.NUM_SHARDS # world_size
-        tokens_per_core = int(batch_size * seq_len / num_cores)
 
-        inputs = inputs.reshape([num_cores, tokens_per_core, d_model])
         inputs = inputs * torch.zeros_like(inputs, device=inputs.device).uniform_(1 - self.epsilon,  1 + self.epsilon)
         inputs = self.layer_norm(inputs)
 

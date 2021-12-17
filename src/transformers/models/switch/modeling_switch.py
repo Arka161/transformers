@@ -414,7 +414,7 @@ class SwitchLayerFF(nn.Module):
 
     def forward(self, inputs: torch.Tensor):
         # mixed precision
-        print(f"inputs: {inputs.device}")
+        # print(f"inputs: {inputs.device}")
         inputs = inputs.to(torch.float32)
         batch_size, seq_len, d_model = inputs.shape
         num_cores = self.config.NUM_SHARDS # world_size
