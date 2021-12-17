@@ -289,6 +289,12 @@ class MustExpertsLayer(nn.Module):
         self.config = config
         # set seed to unique value to initialize experts
         torch.manual_seed(self.config.seed * self.config.GLOBAL_RANK)
+        try:
+            import torch_xla.core.xla_model as xm
+            self.device = xm.xla_device()
+        except Exception as e:
+            self.device = torch.device('cpu')
+
         if config.feed_forward_proj == "relu":
             self.act = nn.ReLU()
             self.wi = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
