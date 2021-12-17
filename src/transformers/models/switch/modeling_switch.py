@@ -404,8 +404,8 @@ class SwitchLayerFF(nn.Module):
             self.device = xm.xla_device()
         except Exception as e:
             self.device = torch.device('cpu')
-        self.router_layer.to(self.device)
-        self.experts.to(self.device)
+        self.router_layer = self.router_layer.to(self.device)
+        self.experts = self.experts.to(self.device)
 
     def forward(self, inputs: torch.Tensor):
         # mixed precision
