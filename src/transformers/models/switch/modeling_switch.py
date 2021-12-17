@@ -384,14 +384,14 @@ class SwitchRouterLayer(nn.Module):
         expert_mask = torch.nn.functional.one_hot(expert_index, num_classes=self.config.n_experts)
         # print(f"expert_mask: {expert_mask.device}")
         aux_loss = self.compute_load_balancing_loss(router_probs, expert_mask)
-        position_in_expert = expert_mask.cumsum(dim=1) * expert_mask
+        position_in_expert = expert_mask #.cumsum(dim=1) * expert_mask
 
         # Drop tokens that don't fit in expert capacity.
         expert_mask *= torch.less(position_in_expert, expert_capacity)
         expert_mask_flat = expert_mask.sum(dim=-1)
 
         # recompute position_in_expert with fewer tokens
-        position_in_expert = expert_mask.cumsum(dim=1) * expert_mask
+        position_in_expert = expert_mask #.cumsum(dim=1) * expert_mask
 
         # mask out token that don't fit within expert capacity
         expert_gate *= expert_mask_flat
