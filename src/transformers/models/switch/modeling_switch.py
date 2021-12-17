@@ -362,7 +362,7 @@ class SwitchRouterLayer(nn.Module):
 
         return loss
 
-    def forward(self, inputs: torch.Tensor):
+    def forward(self, inputs):
         ### Define Shapes ###
         batch_size, seq_len, d_model = inputs.shape
         num_cores = self.config.NUM_SHARDS # world_size
@@ -414,6 +414,7 @@ class SwitchLayerFF(nn.Module):
 
     def forward(self, inputs: torch.Tensor):
         # mixed precision
+        print(f"inputs: {type(inputs)}")
         inputs = inputs.to(torch.float32)
         batch_size, seq_len, d_model = inputs.shape
         num_cores = self.config.NUM_SHARDS # world_size
