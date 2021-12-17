@@ -290,24 +290,19 @@ class SwitchExpertsLayer(nn.Module):
         self.layer_id = layer_id
         # set seed to unique value to initialize experts
         torch.manual_seed(self.config.seed * layer_id * 10000)
-        try:
-            import torch_xla.core.xla_model as xm
-            self.device = xm.xla_device()
-        except Exception as e:
-            self.device = torch.device('cpu')
 
         if config.feed_forward_proj == "relu":
             self.act = nn.ReLU()
-            self.wi = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
-            self.wo = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_ff,  self.config.d_model], dtype=torch.float32, device=self.device)
+            self.wi = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_model, self.config.d_ff], dtype=torch.float32)
+            self.wo = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_ff,  self.config.d_model], dtype=torch.float32)
             self.wi.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5), )
             self.wo.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_ff) ** -0.5))
         elif config.feed_forward_proj == "gated-gelu":
             # TODO : replace SwitchDenseGatedGeluDense with an einsum implementation
             self.act = ACT2FN["gelu_new"]
-            self.wi_0 = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
-            self.wi_1 = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
-            self.wo = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_ff,  self.config.d_model], dtype=torch.float32, device=self.devie)
+            self.wi_0 = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_model, self.config.d_ff], dtype=torch.float32)
+            self.wi_1 = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_model, self.config.d_ff], dtype=torch.float32)
+            self.wo = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_ff,  self.config.d_model], dtype=torch.float32
             self.wi_0.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
             self.wi_1.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
             self.wo.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_ff) ** -0.5))
@@ -404,11 +399,17 @@ class SwitchLayerFF(nn.Module):
         self.dropout = nn.Dropout(config.dropout_rate)
         self.router_layer = SwitchRouterLayer(config)
         self.experts = SwitchExpertsLayer(config, layer_id)
+        try:
+            import torch_xla.core.xla_model as xm
+            self.device = xm.xla_device()
+        except Exception as e:
+            self.device = torch.device('cpu')
+        self.router_layer.to(self.device)
+        self.experts.to(self.device)
 
     def forward(self, inputs: torch.Tensor):
         # mixed precision
         inputs = inputs.to(torch.float32)
-        self.experts = self.experts.to(inputs.device)
         batch_size, seq_len, d_model = inputs.shape
         num_cores = self.config.NUM_SHARDS # world_size
 
