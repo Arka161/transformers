@@ -350,7 +350,7 @@ class MustRouterLayer(nn.Module):
             self.device = xm.xla_device()
         except Exception as e:
             self.device = torch.device('cpu')
-        self.linear = nn.Linear(self.config.d_model, self.config.n_experts, self.device)
+        self.linear = nn.Linear(self.config.d_model, self.config.n_experts, device=self.device)
         self.softmax = nn.Softmax(dim=-1)
 
     def compute_load_balancing_loss(self, router_probs, expert_mask):
@@ -402,7 +402,6 @@ class MustLayerFF(nn.Module):
         super().__init__()
         self.epsilon = 1e-6
         self.config = config
-        self.router = nn.Linear(self.config.d_model, self.config.n_experts)
         self.layer_norm = MustLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
         self.router_layer = MustRouterLayer(config)
