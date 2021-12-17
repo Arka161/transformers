@@ -380,6 +380,7 @@ class SwitchRouterLayer(nn.Module):
 
         # expert mask: (n_cores, n_tokens, n_experts)
         expert_mask = torch.nn.functional.one_hot(expert_index, num_classes=self.config.n_experts)
+        print(type(expert_mask))
         aux_loss = self.compute_load_balancing_loss(router_probs, expert_mask)
         position_in_expert = expert_mask.cumsum(dim=1) * expert_mask
 
