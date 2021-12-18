@@ -757,6 +757,7 @@ class MustBlock(nn.Module):
         super().__init__()
         self.is_decoder = config.is_decoder
         self.layer = nn.ModuleList()
+        self.config = config
 
         self.layer.append(MustLayerSelfAttention(config, has_relative_attention_bias=has_relative_attention_bias))
         if self.is_decoder:
@@ -824,7 +825,7 @@ class MustBlock(nn.Module):
         self.metsumm(stepno='2')
 
         # clamp inf values to enable fp16 training
-        if hidden_states.dtype == torch.float16 and torch.isinf(hidden_states).any():
+        if hidden_states.dtype == torch.float16:
             clamp_value = torch.finfo(hidden_states.dtype).max - 1000
             hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
@@ -853,7 +854,7 @@ class MustBlock(nn.Module):
             self.metsumm(stepno='4')
 
             # clamp inf values to enable fp16 training
-            if hidden_states.dtype == torch.float16 and torch.isinf(hidden_states).any():
+            if hidden_states.dtype == torch.float16:
                 clamp_value = torch.finfo(hidden_states.dtype).max - 1000
                 hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
@@ -870,7 +871,7 @@ class MustBlock(nn.Module):
         self.metsumm(stepno='6')
 
         # clamp inf values to enable fp16 training
-        if hidden_states.dtype == torch.float16 and torch.isinf(hidden_states).any():
+        if hidden_states.dtype == torch.float16:
             clamp_value = torch.finfo(hidden_states.dtype).max - 1000
             hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
