@@ -424,7 +424,7 @@ class MustLayerFF(nn.Module):
         if self.config.xla_found:
             from .dist import all_to_all
             all_to_all(expert_inputs, split_dimension=1, concat_dimension=0, split_count=num_cores)
-        breakpoint()
+
         ### Perform Expert Forward ###
         expert_outputs = self.experts(expert_inputs)
 
