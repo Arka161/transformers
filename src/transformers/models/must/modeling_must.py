@@ -764,19 +764,6 @@ class MustBlock(nn.Module):
             self.layer.append(MustLayerCrossAttention(config))
         self.layer.append(MustLayerFF(config))
 
-    def metsumm(self, stepno=''):
-        if self.config.xla_found:
-            import torch_xla.debug.metrics as met
-            x = met.metrics_report().split('\n')
-            for i, line in enumerate(x):
-                if 'CompileTime' in line or 'aten::' in line:
-                    key = line.split()[-1]
-                    value = x[i + 1].split()[-1]
-                    print(
-                        'step {}, key {}, value {}'.format(
-                            stepno, key, value
-                        )
-                    )
     def forward(
         self,
         hidden_states,
@@ -808,7 +795,6 @@ class MustBlock(nn.Module):
             cross_attn_past_key_value = past_key_value[2:]
         else:
             self_attn_past_key_value, cross_attn_past_key_value = None, None
-        self.metsumm(stepno='0')
         self_attention_outputs = self.layer[0](
             hidden_states,
             attention_mask=attention_mask,
@@ -818,11 +804,9 @@ class MustBlock(nn.Module):
             use_cache=use_cache,
             output_attentions=output_attentions,
         )
-        self.metsumm(stepno='1')
 
         hidden_states, present_key_value_state = self_attention_outputs[:2]
         attention_outputs = self_attention_outputs[2:]  # Keep self-attention outputs and relative position weights
-        self.metsumm(stepno='2')
 
         # clamp inf values to enable fp16 training
         if hidden_states.dtype == torch.float16:
@@ -837,7 +821,6 @@ class MustBlock(nn.Module):
                 query_length = present_key_value_state[0].shape[2]
             else:
                 query_length = None
-            self.metsumm(stepno='3')
 
             cross_attention_outputs = self.layer[1](
                 hidden_states,
@@ -851,7 +834,6 @@ class MustBlock(nn.Module):
                 output_attentions=output_attentions,
             )
             hidden_states = cross_attention_outputs[0]
-            self.metsumm(stepno='4')
 
             # clamp inf values to enable fp16 training
             if hidden_states.dtype == torch.float16:
@@ -864,11 +846,9 @@ class MustBlock(nn.Module):
 
             # Keep cross-attention outputs and relative position weights
             attention_outputs = attention_outputs + cross_attention_outputs[2:]
-        self.metsumm(stepno='5')
 
         # Apply Feed Forward layer
         hidden_states, aux_losses = self.layer[-1](hidden_states)
-        self.metsumm(stepno='6')
 
         # clamp inf values to enable fp16 training
         if hidden_states.dtype == torch.float16:
@@ -876,14 +856,12 @@ class MustBlock(nn.Module):
             hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
         outputs = (hidden_states,)
-        self.metsumm(stepno='7')
 
         if use_cache:
             outputs = outputs + (present_key_value_state,) + attention_outputs
         else:
             outputs = outputs + attention_outputs
         outputs = outputs + (aux_losses,)
-        self.metsumm(stepno='8')
         return outputs  # hidden-states, present_key_value_states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
 
 class MustPreTrainedModel(PreTrainedModel):
@@ -989,12 +967,26 @@ class MustStack(MustPreTrainedModel):
         self.embed_tokens = embed_tokens
         self.is_decoder = config.is_decoder
         self.block = MustBlock(config, has_relative_attention_bias=True)
+        self.config = config
 
         self.final_layer_norm = MustLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
 
         self.init_weights()
 
+    def metsumm(self, stepno=''):
+        if self.config.xla_found:
+            import torch_xla.debug.metrics as met
+            x = met.metrics_report().split('\n')
+            for i, line in enumerate(x):
+                if 'CompileTime' in line or 'aten::' in line:
+                    key = line.split()[-1]
+                    value = x[i + 1].split()[-1]
+                    print(
+                        'step {}, key {}, value {}'.format(
+                            stepno, key, value
+                        )
+                    )
     def get_input_embeddings(self):
         return self.embed_tokens
 
@@ -1016,13 +1008,14 @@ class MustStack(MustPreTrainedModel):
         output_hidden_states=None,
         return_dict=None,
     ):
+        self.metsumm(0)
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
+        self.metsumm(1)
         if input_ids is not None and inputs_embeds is not None:
             err_msg_prefix = "decoder_" if self.is_decoder else ""
             raise ValueError(
@@ -1036,18 +1029,19 @@ class MustStack(MustPreTrainedModel):
         else:
             err_msg_prefix = "decoder_" if self.is_decoder else ""
             raise ValueError(f"You have to specify either {err_msg_prefix}input_ids or {err_msg_prefix}inputs_embeds")
-
+        self.metsumm(2)
         if inputs_embeds is None:
             assert self.embed_tokens is not None, "You have to initialize the model with valid token embeddings"
             inputs_embeds = self.embed_tokens(input_ids)
-
         batch_size, seq_length = input_shape
+        self.metsumm(3)
 
         # required mask seq length can be calculated via length of past
         mask_seq_length = past_key_values[0][0].shape[2] + seq_length if past_key_values is not None else seq_length
 
         if use_cache is True:
             assert self.is_decoder, f":obj:`use_cache` can only be set to `True` if {self} is used as a decoder"
+        self.metsumm(4)
 
         if attention_mask is None:
             attention_mask = torch.ones(batch_size, mask_seq_length).to(inputs_embeds.device)
@@ -1056,6 +1050,7 @@ class MustStack(MustPreTrainedModel):
             encoder_attention_mask = torch.ones(
                 batch_size, encoder_seq_length, device=inputs_embeds.device, dtype=torch.long
             )
+        self.metsumm(5)
 
         # initialize past_key_values with `None` if past does not exist
         if past_key_values is None:
@@ -1064,6 +1059,7 @@ class MustStack(MustPreTrainedModel):
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
         extended_attention_mask = self.get_extended_attention_mask(attention_mask, input_shape, inputs_embeds.device)
+        self.metsumm(6)
 
         # If a 2D or 3D attention mask is provided for the cross-attention
         # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]
@@ -1075,6 +1071,7 @@ class MustStack(MustPreTrainedModel):
             encoder_extended_attention_mask = self.invert_attention_mask(encoder_attention_mask)
         else:
             encoder_extended_attention_mask = None
+        self.metsumm(7)
 
         # Prepare head mask if needed
         head_mask = self.get_head_mask(head_mask, self.config.num_timesteps)
@@ -1087,8 +1084,9 @@ class MustStack(MustPreTrainedModel):
         encoder_decoder_position_bias = None
         aux_losses = []
         hidden_states = self.dropout(inputs_embeds)
+        self.metsumm(9)
+
         for i in range(self.config.num_timesteps):
-        # for i, (layer_module, past_key_value) in enumerate(zip(self.block, past_key_values)):
             layer_head_mask = head_mask[i]
             cross_attn_layer_head_mask = cross_attn_head_mask[i]
             if output_hidden_states:
@@ -1130,9 +1128,11 @@ class MustStack(MustPreTrainedModel):
                 all_attentions = all_attentions + (layer_outputs[3],)
                 if self.is_decoder:
                     all_cross_attentions = all_cross_attentions + (layer_outputs[5],)
+        self.metsumm(10)
 
         hidden_states = self.final_layer_norm(hidden_states)
         hidden_states = self.dropout(hidden_states)
+        self.metsumm(11)
 
         # Add last layer
         if output_hidden_states:
