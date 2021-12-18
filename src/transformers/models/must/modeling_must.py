@@ -366,7 +366,7 @@ class MustRouterLayer(nn.Module):
         batch_size, seq_len, d_model = inputs.shape
         num_cores = self.config.NUM_SHARDS # world_size
         tokens_per_core = int(batch_size * seq_len / num_cores)
-        expert_capacity = int(self.config.capacity_factor * int(batch_size * seq_len) // self.config.n_experts)
+        expert_capacity = max(int(self.config.capacity_factor * int(batch_size * seq_len) // self.config.n_experts), 1)
         inputs = inputs.reshape([num_cores, tokens_per_core, d_model])
         ### Perform Routing ###
         # router_probs: (n_cores, n_tokens, n_experts)
