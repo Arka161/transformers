@@ -1798,18 +1798,17 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
         lm_logits = self.lm_head(sequence_output)
         loss = None
         if labels is not None:
-            # TODO add load balancing loss
             loss_fct = CrossEntropyLoss(ignore_index=-100)
             loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
-            loss = loss + self.config.load_balancing_loss_ceof * (torch.stack(encoder_aux_losses).sum() + torch.stack(decoder_aux_losses).sum())
-            # TODO(thom): Add z_loss https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/layers.py#L666
-
+            aux_loss = self.config.load_balancing_loss_coef * (torch.stack(encoder_aux_losses).sum() + torch.stack(decoder_aux_losses).sum())
+            loss = loss + aux_loss
         if not return_dict:
             output = (lm_logits,) + decoder_outputs[1:] + encoder_outputs
             return ((loss,) + output) if loss is not None else output
 
         return Seq2SeqLMOutput(
             loss=loss,
+            aux_loss=aux_loss,
             logits=lm_logits,
             past_key_values=decoder_outputs.past_key_values,
             decoder_hidden_states=decoder_outputs.hidden_states,

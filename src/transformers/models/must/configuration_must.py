@@ -103,7 +103,7 @@ class MustConfig(PretrainedConfig):
         capacity_factor : float = 1,
         drop_token : bool = False,
         n_experts : int = 2,
-        load_balancing_loss_ceof : float = 0.01,
+        load_balancing_loss_coef : float = 0.01,
         **kwargs
     ):
         self.vocab_size = vocab_size
@@ -123,7 +123,7 @@ class MustConfig(PretrainedConfig):
         self.use_cache = use_cache
         self.capacity_factor = capacity_factor
         self.n_experts=n_experts
-        self.load_balancing_loss_ceof = load_balancing_loss_ceof
+        self.load_balancing_loss_coef = load_balancing_loss_coef
         self.drop_token = drop_token
         super().__init__(
             pad_token_id=pad_token_id,
