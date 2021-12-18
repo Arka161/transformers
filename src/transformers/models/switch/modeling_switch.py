@@ -368,7 +368,6 @@ class SwitchRouterLayer(nn.Module):
         num_cores = self.config.NUM_SHARDS # world_size
         tokens_per_core = int(batch_size * seq_len / num_cores)
         expert_capacity = max(int(self.config.capacity_factor * int(batch_size * seq_len) // self.config.n_experts), 1)
-        breakpoint()
         inputs = inputs.reshape([num_cores, tokens_per_core, d_model])
 
         ### Perform Routing ###

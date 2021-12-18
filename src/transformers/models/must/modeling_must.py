@@ -352,19 +352,7 @@ class MustRouterLayer(nn.Module):
             self.device = torch.device('cpu')
         self.linear = nn.Linear(self.config.d_model, self.config.n_experts, device=self.device)
         self.softmax = nn.Softmax(dim=-1)
-    def metsumm(self, stepno=''):
-        if self.config.xla_found:
-            import torch_xla.debug.metrics as met
-            x = met.metrics_report().split('\n')
-            for i, line in enumerate(x):
-                if 'CompileTime' in line or 'aten::' in line:
-                    key = line.split()[-1]
-                    value = x[i + 1].split()[-1]
-                    print(
-                        'step {}, key {}, value {}'.format(
-                            stepno, key, value
-                        )
-                    )
+
     def compute_load_balancing_loss(self, router_probs, expert_mask):
         # Get proportion of tokens routed to each expert, TODO reduce across cores
         density1 = expert_mask.float().mean(dim=1)
@@ -390,9 +378,12 @@ class MustRouterLayer(nn.Module):
         expert_gate, expert_index = router_probs.max(dim=-1)
 
         # expert mask: (n_cores, n_tokens, n_experts)
+
+        # One-hot encoding of EXPERT_MASK
         expert_mask = torch.zeros(num_cores, tokens_per_core, self.config.n_experts, device=self.device)
         expert_mask.scatter_(2, expert_index.unsqueeze(2), 1.0)
         expert_mask = expert_mask.long()
+
         aux_loss = self.compute_load_balancing_loss(router_probs, expert_mask)
         position_in_expert = (expert_mask.float().cumsum(dim=1) * expert_mask).long()
 
@@ -405,17 +396,16 @@ class MustRouterLayer(nn.Module):
 
         # mask out token that don't fit within expert capacity
         expert_gate *= expert_mask_flat
-        self.metsumm(1)
 
-        # combine_tensor: (n_cores, n_tokens, n_experts, expert_capacity)
+        # One-hot encoding of expert_index and position inf
         expert_index_inf = torch.zeros(num_cores, tokens_per_core, self.config.n_experts, 1, device=self.device)
         expert_index_inf.scatter_(1, expert_index.unsqueeze(2).unsqueeze(3), 1.0)
         position_inf = torch.zeros(num_cores, tokens_per_core, self.config.n_experts, expert_capacity, device=self.device)
         position_inf.scatter_(3, position_in_expert.unsqueeze(3), 1.0)
+
+        # combine_tensor: (n_cores, n_tokens, n_experts, expert_capacity)
         combine_tensor = expert_gate.reshape(num_cores, tokens_per_core, 1, 1) * expert_mask_flat.reshape(num_cores, tokens_per_core, 1, 1) * expert_index_inf * position_inf
         dispatch_tensor = combine_tensor.bool()
-        self.metsumm(2)
-
         return dispatch_tensor, combine_tensor, aux_loss
 
 class MustLayerFF(nn.Module):
@@ -773,6 +763,19 @@ class MustBlock(nn.Module):
             self.layer.append(MustLayerCrossAttention(config))
         self.layer.append(MustLayerFF(config))
 
+    def metsumm(self, stepno=''):
+        if self.config.xla_found:
+            import torch_xla.debug.metrics as met
+            x = met.metrics_report().split('\n')
+            for i, line in enumerate(x):
+                if 'CompileTime' in line or 'aten::' in line:
+                    key = line.split()[-1]
+                    value = x[i + 1].split()[-1]
+                    print(
+                        'step {}, key {}, value {}'.format(
+                            stepno, key, value
+                        )
+                    )
     def forward(
         self,
         hidden_states,
@@ -804,7 +807,7 @@ class MustBlock(nn.Module):
             cross_attn_past_key_value = past_key_value[2:]
         else:
             self_attn_past_key_value, cross_attn_past_key_value = None, None
-
+        self.metsumm(stepno='0')
         self_attention_outputs = self.layer[0](
             hidden_states,
             attention_mask=attention_mask,
@@ -814,8 +817,11 @@ class MustBlock(nn.Module):
             use_cache=use_cache,
             output_attentions=output_attentions,
         )
+        self.metsumm(stepno='1')
+
         hidden_states, present_key_value_state = self_attention_outputs[:2]
         attention_outputs = self_attention_outputs[2:]  # Keep self-attention outputs and relative position weights
+        self.metsumm(stepno='2')
 
         # clamp inf values to enable fp16 training
         if hidden_states.dtype == torch.float16 and torch.isinf(hidden_states).any():
@@ -830,6 +836,7 @@ class MustBlock(nn.Module):
                 query_length = present_key_value_state[0].shape[2]
             else:
                 query_length = None
+            self.metsumm(stepno='3')
 
             cross_attention_outputs = self.layer[1](
                 hidden_states,
@@ -843,6 +850,7 @@ class MustBlock(nn.Module):
                 output_attentions=output_attentions,
             )
             hidden_states = cross_attention_outputs[0]
+            self.metsumm(stepno='4')
 
             # clamp inf values to enable fp16 training
             if hidden_states.dtype == torch.float16 and torch.isinf(hidden_states).any():
@@ -855,9 +863,11 @@ class MustBlock(nn.Module):
 
             # Keep cross-attention outputs and relative position weights
             attention_outputs = attention_outputs + cross_attention_outputs[2:]
+        self.metsumm(stepno='5')
 
         # Apply Feed Forward layer
         hidden_states, aux_losses = self.layer[-1](hidden_states)
+        self.metsumm(stepno='6')
 
         # clamp inf values to enable fp16 training
         if hidden_states.dtype == torch.float16 and torch.isinf(hidden_states).any():
@@ -865,12 +875,14 @@ class MustBlock(nn.Module):
             hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
         outputs = (hidden_states,)
+        self.metsumm(stepno='7')
 
         if use_cache:
             outputs = outputs + (present_key_value_state,) + attention_outputs
         else:
             outputs = outputs + attention_outputs
         outputs = outputs + (aux_losses,)
+        self.metsumm(stepno='8')
         return outputs  # hidden-states, present_key_value_states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
 
 class MustPreTrainedModel(PreTrainedModel):
