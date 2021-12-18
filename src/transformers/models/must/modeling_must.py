@@ -974,19 +974,6 @@ class MustStack(MustPreTrainedModel):
 
         self.init_weights()
 
-    def metsumm(self, stepno=''):
-        if self.config.xla_found:
-            import torch_xla.debug.metrics as met
-            x = met.metrics_report().split('\n')
-            for i, line in enumerate(x):
-                if 'CompileTime' in line or 'aten::' in line:
-                    key = line.split()[-1]
-                    value = x[i + 1].split()[-1]
-                    print(
-                        'step {}, key {}, value {}'.format(
-                            stepno, key, value
-                        )
-                    )
     def get_input_embeddings(self):
         return self.embed_tokens
 
@@ -1008,14 +995,13 @@ class MustStack(MustPreTrainedModel):
         output_hidden_states=None,
         return_dict=None,
     ):
-        self.metsumm(0)
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-        self.metsumm(1)
+
         if input_ids is not None and inputs_embeds is not None:
             err_msg_prefix = "decoder_" if self.is_decoder else ""
             raise ValueError(
@@ -1029,19 +1015,17 @@ class MustStack(MustPreTrainedModel):
         else:
             err_msg_prefix = "decoder_" if self.is_decoder else ""
             raise ValueError(f"You have to specify either {err_msg_prefix}input_ids or {err_msg_prefix}inputs_embeds")
-        self.metsumm(2)
+
         if inputs_embeds is None:
             assert self.embed_tokens is not None, "You have to initialize the model with valid token embeddings"
             inputs_embeds = self.embed_tokens(input_ids)
         batch_size, seq_length = input_shape
-        self.metsumm(3)
 
         # required mask seq length can be calculated via length of past
         mask_seq_length = past_key_values[0][0].shape[2] + seq_length if past_key_values is not None else seq_length
 
         if use_cache is True:
             assert self.is_decoder, f":obj:`use_cache` can only be set to `True` if {self} is used as a decoder"
-        self.metsumm(4)
 
         if attention_mask is None:
             attention_mask = torch.ones(batch_size, mask_seq_length).to(inputs_embeds.device)
@@ -1050,7 +1034,6 @@ class MustStack(MustPreTrainedModel):
             encoder_attention_mask = torch.ones(
                 batch_size, encoder_seq_length, device=inputs_embeds.device, dtype=torch.long
             )
-        self.metsumm(5)
 
         # initialize past_key_values with `None` if past does not exist
         if past_key_values is None:
@@ -1059,7 +1042,6 @@ class MustStack(MustPreTrainedModel):
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
         extended_attention_mask = self.get_extended_attention_mask(attention_mask, input_shape, inputs_embeds.device)
-        self.metsumm(6)
 
         # If a 2D or 3D attention mask is provided for the cross-attention
         # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]
@@ -1071,7 +1053,6 @@ class MustStack(MustPreTrainedModel):
             encoder_extended_attention_mask = self.invert_attention_mask(encoder_attention_mask)
         else:
             encoder_extended_attention_mask = None
-        self.metsumm(7)
 
         # Prepare head mask if needed
         head_mask = self.get_head_mask(head_mask, self.config.num_timesteps)
@@ -1084,7 +1065,6 @@ class MustStack(MustPreTrainedModel):
         encoder_decoder_position_bias = None
         aux_losses = []
         hidden_states = self.dropout(inputs_embeds)
-        self.metsumm(9)
 
         for i in range(self.config.num_timesteps):
             layer_head_mask = head_mask[i]
@@ -1128,11 +1108,9 @@ class MustStack(MustPreTrainedModel):
                 all_attentions = all_attentions + (layer_outputs[3],)
                 if self.is_decoder:
                     all_cross_attentions = all_cross_attentions + (layer_outputs[5],)
-        self.metsumm(10)
 
         hidden_states = self.final_layer_norm(hidden_states)
         hidden_states = self.dropout(hidden_states)
-        self.metsumm(11)
 
         # Add last layer
         if output_hidden_states:
@@ -1477,19 +1455,6 @@ class MustModel(MustPreTrainedModel):
             )
 
         hidden_states = encoder_outputs[0]
-        if self.model_parallel:
-            torch.cuda.set_device(self.decoder.first_device)
-        # Set device for model parallelism
-        if self.model_parallel:
-            torch.cuda.set_device(self.decoder.first_device)
-            hidden_states = hidden_states.to(self.decoder.first_device)
-            if decoder_input_ids is not None:
-                decoder_input_ids = decoder_input_ids.to(self.decoder.first_device)
-            if attention_mask is not None:
-                attention_mask = attention_mask.to(self.decoder.first_device)
-            if decoder_attention_mask is not None:
-                decoder_attention_mask = decoder_attention_mask.to(self.decoder.first_device)
-
         # Decode
         decoder_outputs = self.decoder(
             input_ids=decoder_input_ids,
@@ -1559,6 +1524,19 @@ class MustForConditionalGeneration(MustPreTrainedModel):
         self.model_parallel = False
         self.device_map = None
 
+    def metsumm(self, stepno=''):
+        if self.config.xla_found:
+            import torch_xla.debug.metrics as met
+            x = met.metrics_report().split('\n')
+            for i, line in enumerate(x):
+                if 'CompileTime' in line or 'aten::' in line:
+                    key = line.split()[-1]
+                    value = x[i + 1].split()[-1]
+                    print(
+                        'step {}, key {}, value {}'.format(
+                            stepno, key, value
+                        )
+                    )
     def get_input_embeddings(self):
         return self.shared
 
@@ -1628,6 +1606,7 @@ class MustForConditionalGeneration(MustPreTrainedModel):
             >>> print(tokenizer.decode(outputs[0], skip_special_tokens=True))
             >>> # studies have shown that owning a dog is good for you.
         """
+        self.metsumm(0)
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
@@ -1636,6 +1615,7 @@ class MustForConditionalGeneration(MustPreTrainedModel):
             if self.config.num_layers == self.config.num_decoder_layers:
                 warnings.warn(__HEAD_MASK_WARNING_MSG, FutureWarning)
                 decoder_head_mask = head_mask
+        self.metsumm(1)
 
         # Encode if needed (training, first prediction pass)
         if encoder_outputs is None:
@@ -1658,12 +1638,15 @@ class MustForConditionalGeneration(MustPreTrainedModel):
                 hidden_states=encoder_outputs[0][1] if len(encoder_outputs[0]) > 1 else None,
                 attentions=encoder_outputs[0][2] if len(encoder_outputs[0]) > 2 else None,
             )
+        self.metsumm(2)
 
         hidden_states = encoder_outputs[0]
 
         if labels is not None and decoder_input_ids is None and decoder_inputs_embeds is None:
+            self.metsumm(3)
             # get decoder inputs from shifting lm labels to the right
             decoder_input_ids = self._shift_right(labels)
+        self.metsumm(4)
 
         # Decode
         decoder_outputs = self.decoder(
@@ -1683,11 +1666,13 @@ class MustForConditionalGeneration(MustPreTrainedModel):
         decoder_aux_losses = decoder_outputs[-1]
         decoder_outputs = decoder_outputs[0]
         sequence_output = decoder_outputs[0]
+        self.metsumm(5)
 
         if self.config.tie_word_embeddings:
             # Rescale output before projecting on vocab
             # See https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/transformer/transformer.py#L586
             sequence_output = sequence_output * (self.model_dim ** -0.5)
+        self.metsumm(6)
 
         lm_logits = self.lm_head(sequence_output)
         loss = None
@@ -1696,10 +1681,12 @@ class MustForConditionalGeneration(MustPreTrainedModel):
             loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
             aux_loss = self.config.load_balancing_loss_coef * (torch.stack(encoder_aux_losses).sum() + torch.stack(decoder_aux_losses).sum())
             loss = loss + aux_loss
+        self.metsumm(7)
 
         if not return_dict:
             output = (lm_logits,) + decoder_outputs[1:] + encoder_outputs
             return ((loss,) + output) if loss is not None else output
+        self.metsumm(8)
 
         return Seq2SeqLMOutput(
             loss=loss,
