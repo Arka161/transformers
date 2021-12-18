@@ -366,7 +366,7 @@ class MustRouterLayer(nn.Module):
         batch_size, seq_len, d_model = inputs.shape
         num_cores = self.config.NUM_SHARDS # world_size
         tokens_per_core = int(batch_size * seq_len / num_cores)
-        expert_capacity = int(self.config.capacity_factor * tokens_per_core * num_cores / (self.config.n_experts // self.config.NUM_SHARDS))
+        expert_capacity = int(self.config.capacity_factor * tokens_per_core  / (self.config.n_experts // self.config.NUM_SHARDS))
         inputs = inputs.reshape([num_cores, tokens_per_core, d_model])
         ### Perform Routing ###
         # router_probs: (n_cores, n_tokens, n_experts)
@@ -424,7 +424,7 @@ class MustLayerFF(nn.Module):
         if self.config.xla_found:
             from .dist import all_to_all
             all_to_all(expert_inputs, split_dimension=1, concat_dimension=0, split_count=num_cores)
-
+        breakpoint()
         ### Perform Expert Forward ###
         expert_outputs = self.experts(expert_inputs)
 
