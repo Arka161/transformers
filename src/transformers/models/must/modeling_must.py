@@ -352,60 +352,6 @@ class MustRouterLayer(nn.Module):
             self.device = torch.device('cpu')
         self.linear = nn.Linear(self.config.d_model, self.config.n_experts, device=self.device)
         self.softmax = nn.Softmax(dim=-1)
-
-    def compute_load_balancing_loss(self, router_probs, expert_mask):
-        # Get proportion of tokens routed to each expert, TODO reduce across cores
-        density1 = expert_mask.float().mean(dim=1)
-        density1_proxy = router_probs.mean(dim=1)
-        loss = (density1 * density1_proxy) * (self.config.n_experts ** 2)
-        return loss
-
-    def forward(self, inputs: torch.Tensor):
-        ### Define Shapes ###
-        batch_size, seq_len, d_model = inputs.shape
-        num_cores = self.config.NUM_SHARDS # world_size
-        tokens_per_core = int(batch_size * seq_len / num_cores)
-        expert_capacity = max(int(self.config.capacity_factor * int(batch_size * seq_len) // self.config.n_experts), 1)
-        inputs = inputs.reshape([num_cores, tokens_per_core, d_model])
-        ### Perform Routing ###
-        # router_probs: (n_cores, n_tokens, n_experts)
-        router_logits = self.linear(inputs)
-        router_probs = self.softmax(router_logits)
-
-        ### Setup Expert Inputs and Dispatch tensor ###
-        # expert_gate, expert_index: (n_cores n_tokens)
-        expert_gate, expert_index = router_probs.max(dim=-1)
-
-        # expert mask: (n_cores, n_tokens, n_experts)
-        expert_mask = torch.nn.functional.one_hot(expert_index, num_classes=self.config.n_experts)
-        aux_loss = self.compute_load_balancing_loss(router_probs, expert_mask)
-        position_in_expert = (expert_mask.float().cumsum(dim=1) * expert_mask).long()
-
-        # Drop tokens that don't fit in expert capacity.
-        expert_mask *= torch.less(position_in_expert, expert_capacity)
-        expert_mask_flat = expert_mask.sum(dim=-1)
-
-        # recompute position_in_expert with fewer tokens
-        position_in_expert = (expert_mask.float().cumsum(dim=1) * expert_mask).long()
-
-        # mask out token that don't fit within expert capacity
-        expert_gate *= expert_mask_flat
-
-        # combine_tensor: (n_cores, n_tokens, n_experts, expert_capacity)
-        combine_tensor = expert_gate.reshape(num_cores, tokens_per_core, 1, 1) * expert_mask_flat.reshape(num_cores, tokens_per_core, 1, 1) * F.one_hot(expert_index, num_classes=self.config.n_experts).unsqueeze(3) * F.one_hot(position_in_expert, num_classes=expert_capacity)
-        dispatch_tensor = combine_tensor.bool()
-        return dispatch_tensor, combine_tensor, aux_loss
-
-class MustLayerFF(nn.Module):
-    def __init__(self, config: MustConfig):
-        super().__init__()
-        self.epsilon = 1e-6
-        self.config = config
-        self.layer_norm = MustLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
-        self.dropout = nn.Dropout(config.dropout_rate)
-        self.router_layer = MustRouterLayer(config)
-        self.experts = MustExpertsLayer(config)
-
     def metsumm(self, stepno=''):
         if self.config.xla_found:
             import torch_xla.debug.metrics as met
@@ -419,38 +365,96 @@ class MustLayerFF(nn.Module):
                             stepno, key, value
                         )
                     )
+    def compute_load_balancing_loss(self, router_probs, expert_mask):
+        # Get proportion of tokens routed to each expert, TODO reduce across cores
+        density1 = expert_mask.float().mean(dim=1)
+        density1_proxy = router_probs.mean(dim=1)
+        loss = (density1 * density1_proxy) * (self.config.n_experts ** 2)
+        return loss
+
+    def forward(self, inputs: torch.Tensor):
+        ### Define Shapes ###
+        self.metsumm(0)
+        batch_size, seq_len, d_model = inputs.shape
+        num_cores = self.config.NUM_SHARDS # world_size
+        tokens_per_core = int(batch_size * seq_len / num_cores)
+        expert_capacity = max(int(self.config.capacity_factor * int(batch_size * seq_len) // self.config.n_experts), 1)
+        inputs = inputs.reshape([num_cores, tokens_per_core, d_model])
+        ### Perform Routing ###
+        self.metsumm(1)
+
+        # router_probs: (n_cores, n_tokens, n_experts)
+        router_logits = self.linear(inputs)
+        router_probs = self.softmax(router_logits)
+        self.metsumm(2)
+
+        ### Setup Expert Inputs and Dispatch tensor ###
+        # expert_gate, expert_index: (n_cores n_tokens)
+        expert_gate, expert_index = router_probs.max(dim=-1)
+        self.metsumm(3)
+
+        # expert mask: (n_cores, n_tokens, n_experts)
+        expert_mask = torch.nn.functional.one_hot(expert_index, num_classes=self.config.n_experts)
+        aux_loss = self.compute_load_balancing_loss(router_probs, expert_mask)
+        position_in_expert = (expert_mask.float().cumsum(dim=1) * expert_mask).long()
+        self.metsumm(4)
+
+        # Drop tokens that don't fit in expert capacity.
+        expert_mask *= torch.less(position_in_expert, expert_capacity)
+        expert_mask_flat = expert_mask.sum(dim=-1)
+        self.metsumm(5)
+
+        # recompute position_in_expert with fewer tokens
+        position_in_expert = (expert_mask.float().cumsum(dim=1) * expert_mask).long()
+        self.metsumm(6)
+
+        # mask out token that don't fit within expert capacity
+        expert_gate *= expert_mask_flat
+
+        # combine_tensor: (n_cores, n_tokens, n_experts, expert_capacity)
+        combine_tensor = expert_gate.reshape(num_cores, tokens_per_core, 1, 1) * expert_mask_flat.reshape(num_cores, tokens_per_core, 1, 1) * F.one_hot(expert_index, num_classes=self.config.n_experts).unsqueeze(3) * F.one_hot(position_in_expert, num_classes=expert_capacity)
+        dispatch_tensor = combine_tensor.bool()
+        self.metsumm(7)
+
+        return dispatch_tensor, combine_tensor, aux_loss
+
+class MustLayerFF(nn.Module):
+    def __init__(self, config: MustConfig):
+        super().__init__()
+        self.epsilon = 1e-6
+        self.config = config
+        self.layer_norm = MustLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
+        self.dropout = nn.Dropout(config.dropout_rate)
+        self.router_layer = MustRouterLayer(config)
+        self.experts = MustExpertsLayer(config)
+
+
     def forward(self, inputs: torch.Tensor):
         # mixed precision
 
-        self.metsumm(stepno=0)
         inputs = inputs.to(torch.float32)
         batch_size, seq_len, d_model = inputs.shape
         num_cores = self.config.NUM_SHARDS # world_size
 
         inputs = inputs * torch.zeros_like(inputs, device=inputs.device).uniform_(1 - self.epsilon,  1 + self.epsilon)
         inputs = self.layer_norm(inputs)
-        self.metsumm(stepno=1)
 
         dispatch_tensor, combine_tensor, aux_loss = self.router_layer(inputs)
         # expert_inputs: (n_experts, n_cores, expert_capacity, d_model)
         # inputs: (batch, tokens, model_dim)
         expert_inputs = torch.einsum("bsm,ctxp->xcpm", inputs, dispatch_tensor.float())
-        self.metsumm(stepno=2)
 
         if self.config.xla_found:
             from .dist import all_to_all
             all_to_all(expert_inputs, split_dimension=1, concat_dimension=0, split_count=num_cores)
-        self.metsumm(stepno=3)
 
         ### Perform Expert Forward ###
         expert_outputs = self.experts(expert_inputs)
-        self.metsumm(stepno=4)
 
         # experts_out: expert_capacity, n_experts, d_model; combine_tensor: expert_capacity, n_experts
         # final_output: (batch, tokens, d_model)
         final_output = torch.einsum('xcpm,ctxp->ctm', expert_outputs, combine_tensor.float())
 
-        self.metsumm(stepno=5)
 
         if self.config.xla_found:
             from .dist import all_to_all
