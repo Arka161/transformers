@@ -463,7 +463,6 @@ class MustLayerFF(nn.Module):
         final_output = final_output.view(batch_size, seq_len, d_model)
 
         output = inputs.reshape(batch_size, seq_len, d_model) + self.dropout(final_output)
-        self.metsumm(stepno=6)
 
         return (
             output,
