@@ -406,31 +406,51 @@ class MustLayerFF(nn.Module):
         self.router_layer = MustRouterLayer(config)
         self.experts = MustExpertsLayer(config)
 
+    def metsumm(self, stepno=''):
+        if self.config.xla_found:
+            import torch_xla.debug.metrics as met
+            x = met.metrics_report().split('\n')
+            for i, line in enumerate(x):
+                if 'CompileTime' in line or 'aten::' in line:
+                    key = line.split()[-1]
+                    value = x[i + 1].split()[-1]
+                    print(
+                        'step {}, key {}, value {}'.format(
+                            stepno, key, value
+                        )
+                    )
     def forward(self, inputs: torch.Tensor):
         # mixed precision
+
+        self.metsumm(stepno=0)
         inputs = inputs.to(torch.float32)
         batch_size, seq_len, d_model = inputs.shape
         num_cores = self.config.NUM_SHARDS # world_size
 
         inputs = inputs * torch.zeros_like(inputs, device=inputs.device).uniform_(1 - self.epsilon,  1 + self.epsilon)
         inputs = self.layer_norm(inputs)
+        self.metsumm(stepno=1)
 
         dispatch_tensor, combine_tensor, aux_loss = self.router_layer(inputs)
         # expert_inputs: (n_experts, n_cores, expert_capacity, d_model)
         # inputs: (batch, tokens, model_dim)
         expert_inputs = torch.einsum("bsm,ctxp->xcpm", inputs, dispatch_tensor.float())
+        self.metsumm(stepno=2)
 
         if self.config.xla_found:
             from .dist import all_to_all
             all_to_all(expert_inputs, split_dimension=1, concat_dimension=0, split_count=num_cores)
+        self.metsumm(stepno=3)
 
         ### Perform Expert Forward ###
         expert_outputs = self.experts(expert_inputs)
+        self.metsumm(stepno=4)
 
         # experts_out: expert_capacity, n_experts, d_model; combine_tensor: expert_capacity, n_experts
         # final_output: (batch, tokens, d_model)
         final_output = torch.einsum('xcpm,ctxp->ctm', expert_outputs, combine_tensor.float())
 
+        self.metsumm(stepno=5)
 
         if self.config.xla_found:
             from .dist import all_to_all
@@ -439,6 +459,8 @@ class MustLayerFF(nn.Module):
         final_output = final_output.view(batch_size, seq_len, d_model)
 
         output = inputs.reshape(batch_size, seq_len, d_model) + self.dropout(final_output)
+        self.metsumm(stepno=6)
+
         return (
             output,
             aux_loss
