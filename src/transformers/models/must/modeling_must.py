@@ -323,12 +323,13 @@ class MustExpertsLayer(nn.Module):
 
     def forward(self, expert_inputs):
         if self.config.feed_forward_proj == "relu":
-            # self.wi: (n_experts, d_model, d_ff)
-            # layer1_out: (expert_capacity, n_experts, d_ff)
-            layer1_out = torch.einsum('xmf,xbcm->xbcf', self.wi, expert_inputs)
+            # expert_inputs: [num_cores, n_local_experts, capacity, d_model]
+            # self.wi: (local_experts, d_model, d_ff)
+            # layer1_out: (expert_capacity, local_experts, d_ff)
+            layer1_out = torch.einsum('lmf,cxpm->cxpf', self.wi, expert_inputs)
             out = self.act(layer1_out)
             out = self.dropout(out)
-            expert_outputs = torch.einsum('xfm,xbcf->xbcm', self.wo, out)
+            expert_outputs = torch.einsum('lfm,cxpf->cxpm', self.wo, out)
         elif self.config.feed_forward_proj == "gated-gelu":
             layer1_out = torch.einsum('xmf,xbcm->xbcf', self.wi_0, expert_inputs)
             layer1_out = self.act(layer1_out)
@@ -350,7 +351,7 @@ class MustRouterLayer(nn.Module):
             self.device = xm.xla_device()
         except Exception as e:
             self.device = torch.device('cpu')
-        self.linear = nn.Linear(self.config.d_model, self.config.n_experts, device=self.device)
+        self.linear = nn.Linear(self.config.d_model, self.config.n_experts // self.config.NUM_SHARDS, device=self.device)
         self.softmax = nn.Softmax(dim=-1)
 
     def compute_load_balancing_loss(self, router_probs, expert_mask):
@@ -425,31 +426,30 @@ class MustLayerFF(nn.Module):
         inputs = inputs.to(torch.float32)
         batch_size, seq_len, d_model = inputs.shape
         num_cores = self.config.NUM_SHARDS # world_size
-
         inputs = inputs * torch.zeros_like(inputs, device=inputs.device).uniform_(1 - self.epsilon,  1 + self.epsilon)
         inputs = self.layer_norm(inputs)
 
         dispatch_tensor, combine_tensor, aux_loss = self.router_layer(inputs)
-        # expert_inputs: (n_experts, n_cores, expert_capacity, d_model)
+        # expert_inputs: (n_cores, n_experts, expert_capacity, d_model)
         # inputs: (batch, tokens, model_dim)
-        expert_inputs = torch.einsum("bsm,ctxp->xcpm", inputs, dispatch_tensor.float())
-
+        inputs = inputs.reshape([num_cores, batch_size * seq_len, d_model])
+        expert_inputs = torch.einsum("ctm,ctxp->cxpm", inputs, dispatch_tensor.float())
         if self.config.xla_found:
             from .dist import all_to_all
-            all_to_all(expert_inputs, split_dimension=1, concat_dimension=0, split_count=num_cores)
+            all_to_all(expert_inputs, split_dimension=0, concat_dimension=1, split_count=num_cores)
 
         ### Perform Expert Forward ###
         expert_outputs = self.experts(expert_inputs)
 
-        # experts_out: expert_capacity, n_experts, d_model; combine_tensor: expert_capacity, n_experts
+        # experts_out: cores, experts, capacity, d_model
+        # combine_tensor: cores, tokens, experts, capacity
         # final_output: (batch, tokens, d_model)
-        final_output = torch.einsum('xcpm,ctxp->ctm', expert_outputs, combine_tensor.float())
+        final_output = torch.einsum('cxpm,ctxp->ctm', expert_outputs, combine_tensor.float())
 
 
         if self.config.xla_found:
             from .dist import all_to_all
-            all_to_all(final_output, split_dimension=0, concat_dimension=1, split_count=num_cores)
-
+            all_to_all(final_output, split_dimension=1, concat_dimension=0, split_count=num_cores)
         final_output = final_output.view(batch_size, seq_len, d_model)
 
         output = inputs.reshape(batch_size, seq_len, d_model) + self.dropout(final_output)
@@ -1523,6 +1523,7 @@ class MustForConditionalGeneration(MustPreTrainedModel):
         # Model parallel
         self.model_parallel = False
         self.device_map = None
+
 
     def get_input_embeddings(self):
         return self.shared
