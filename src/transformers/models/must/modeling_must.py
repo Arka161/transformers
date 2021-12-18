@@ -374,47 +374,47 @@ class MustRouterLayer(nn.Module):
 
     def forward(self, inputs: torch.Tensor):
         ### Define Shapes ###
-        self.metsumm(0)
         batch_size, seq_len, d_model = inputs.shape
         num_cores = self.config.NUM_SHARDS # world_size
         tokens_per_core = int(batch_size * seq_len / num_cores)
         expert_capacity = max(int(self.config.capacity_factor * int(batch_size * seq_len) // self.config.n_experts), 1)
         inputs = inputs.reshape([num_cores, tokens_per_core, d_model])
         ### Perform Routing ###
-        self.metsumm(1)
 
         # router_probs: (n_cores, n_tokens, n_experts)
         router_logits = self.linear(inputs)
         router_probs = self.softmax(router_logits)
-        self.metsumm(2)
 
         ### Setup Expert Inputs and Dispatch tensor ###
         # expert_gate, expert_index: (n_cores n_tokens)
         expert_gate, expert_index = router_probs.max(dim=-1)
-        self.metsumm(3)
 
         # expert mask: (n_cores, n_tokens, n_experts)
-        expert_mask = torch.nn.functional.one_hot(expert_index, num_classes=self.config.n_experts)
+        expert_mask = torch.zeros(num_cores, tokens_per_core, self.config.n_experts, device=self.device)
+        expert_mask.scatter_(2, expert_index.unsqueeze(2), 1.0)
+        expert_mask = expert_mask.long()
         aux_loss = self.compute_load_balancing_loss(router_probs, expert_mask)
         position_in_expert = (expert_mask.float().cumsum(dim=1) * expert_mask).long()
-        self.metsumm(4)
 
         # Drop tokens that don't fit in expert capacity.
         expert_mask *= torch.less(position_in_expert, expert_capacity)
         expert_mask_flat = expert_mask.sum(dim=-1)
-        self.metsumm(5)
 
         # recompute position_in_expert with fewer tokens
         position_in_expert = (expert_mask.float().cumsum(dim=1) * expert_mask).long()
-        self.metsumm(6)
 
         # mask out token that don't fit within expert capacity
         expert_gate *= expert_mask_flat
+        self.metsumm(1)
 
         # combine_tensor: (n_cores, n_tokens, n_experts, expert_capacity)
-        combine_tensor = expert_gate.reshape(num_cores, tokens_per_core, 1, 1) * expert_mask_flat.reshape(num_cores, tokens_per_core, 1, 1) * F.one_hot(expert_index, num_classes=self.config.n_experts).unsqueeze(3) * F.one_hot(position_in_expert, num_classes=expert_capacity)
+        expert_index_inf = torch.zeros(num_cores, tokens_per_core, self.config.n_experts, 1, device=self.device)
+        expert_index_inf.scatter_(1, expert_index.unsqueeze(2).unsqueeze(3), 1.0)
+        position_inf = torch.zeros(num_cores, tokens_per_core, self.config.n_experts, expert_capacity, device=self.device)
+        position_inf.scatter_(3, position_in_expert.unsqueeze(3), 1.0)
+        combine_tensor = expert_gate.reshape(num_cores, tokens_per_core, 1, 1) * expert_mask_flat.reshape(num_cores, tokens_per_core, 1, 1) * expert_index_inf * position_inf
         dispatch_tensor = combine_tensor.bool()
-        self.metsumm(7)
+        self.metsumm(2)
 
         return dispatch_tensor, combine_tensor, aux_loss
 
