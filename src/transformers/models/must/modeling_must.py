@@ -363,10 +363,9 @@ class MustRouterLayer(nn.Module):
 
     def forward(self, inputs: torch.Tensor):
         ### Define Shapes ###
-        batch_size, seq_len, d_model = inputs.shape
-        core_dim = 1
+        core_dim, tokens_per_core, d_model = inputs.shape
         n_total_exps = self.config.n_experts * self.config.NUM_SHARDS
-        tokens_per_core = int(batch_size * seq_len / self.config.NUM_SHARDS)
+        tokens_per_core = int(tokens_per_core/ self.config.NUM_SHARDS)
         expert_capacity = max(int(self.config.capacity_factor * tokens_per_core // self.config.n_experts), 1)
         inputs = inputs.reshape([core_dim, tokens_per_core, d_model])
         ### Perform Routing ###
