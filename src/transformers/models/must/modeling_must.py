@@ -325,11 +325,11 @@ class MustExpertsLayer(nn.Module):
         if self.config.feed_forward_proj == "relu":
             # expert_inputs: [num_cores, n_local_experts, capacity, d_model]
             # self.wi: (local_experts, d_model, d_ff)
-            # layer1_out: (expert_capacity, local_experts, d_ff)
-            layer1_out = torch.einsum('lmf,cxpm->cxpf', self.wi, expert_inputs)
+            # layer1_out: (capacity, local_experts, d_ff)
+            layer1_out = torch.einsum('lmf,clpm->clpf', self.wi, expert_inputs)
             out = self.act(layer1_out)
             out = self.dropout(out)
-            expert_outputs = torch.einsum('lfm,cxpf->cxpm', self.wo, out)
+            expert_outputs = torch.einsum('lfm,clpf->clpm', self.wo, out)
         elif self.config.feed_forward_proj == "gated-gelu":
             layer1_out = torch.einsum('xmf,xbcm->xbcf', self.wi_0, expert_inputs)
             layer1_out = self.act(layer1_out)
@@ -440,16 +440,20 @@ class MustLayerFF(nn.Module):
 
         ### Perform Expert Forward ###
         expert_outputs = self.experts(expert_inputs)
-
+        print(f"expert_outputs: {expert_outputs.shape}")
         # experts_out: cores, experts, capacity, d_model
         # combine_tensor: cores, tokens, experts, capacity
         # final_output: (batch, tokens, d_model)
         final_output = torch.einsum('cxpm,ctxp->ctm', expert_outputs, combine_tensor.float())
+        print(f"combine_tensor: {combine_tensor.shape}")
+        print(f"final_output: {final_output.shape}")
 
 
         if self.config.xla_found:
             from .dist import all_to_all
             all_to_all(final_output, split_dimension=0, concat_dimension=1, split_count=self.config.NUM_SHARDS)
+        print(f"final_output_after_all_to_all: {final_output.shape}")
+
         final_output = final_output.view(batch_size, seq_len, d_model)
 
         output = inputs.reshape(batch_size, seq_len, d_model) + self.dropout(final_output)
