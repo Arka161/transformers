@@ -435,10 +435,14 @@ class MustLayerFF(nn.Module):
         # inputs: (batch, tokens, model_dim)
 
         expert_inputs = torch.einsum("ctm,ctxp->cxpm", inputs, dispatch_tensor.float())
+        print(f"expert_inputs shape: {expert_inputs.shape}")
+        print(f"inputs shape: {inputs.shape}")
+        print(f"dispatch_tensor shape: {dispatch_tensor.shape}")
         if self.config.xla_found:
+            print(f"all_to_all, splitting over {self.config.NUM_SHARDS} shards")
             from .dist import all_to_all
             all_to_all(expert_inputs, split_dimension=1, concat_dimension=0, split_count=self.config.NUM_SHARDS)
-
+        print(f"expert_inputs shape after: {expert_inputs.shape}")
         ### Perform Expert Forward ###
         expert_outputs = self.experts(expert_inputs)
         # print(f"expert_outputs: {expert_outputs.shape}")
