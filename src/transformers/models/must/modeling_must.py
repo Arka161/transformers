@@ -358,9 +358,10 @@ class MustRouterLayer(nn.Module):
         print(f"expert_mask: {expert_mask.shape}")
         print(f"router_probs: {router_probs.shape}")
         # Get proportion of tokens routed to each expert, TODO reduce across cores
-        density1 = expert_mask.float().mean(dim=0).mean(dim=0)
-        density1_proxy = router_probs.mean(dim=1).mean(dim=0)
-        loss = (density1 * density1_proxy) * (self.config.n_experts ** 2)
+        n_total_exps = expert_mask.shape[2]
+        density1 = expert_mask.float().mean(dim=1)
+        density1_proxy = router_probs.mean(dim=1)
+        loss = (density1 * density1_proxy) * (n_total_exps ** 2)
         return loss
 
     def forward(self, inputs: torch.Tensor):
@@ -368,7 +369,6 @@ class MustRouterLayer(nn.Module):
         core_dim, tokens_per_core, d_model = inputs.shape
         n_total_exps = self.config.n_experts * self.config.NUM_SHARDS
         expert_capacity = max(int(self.config.capacity_factor * tokens_per_core // self.config.n_experts), 1)
-        inputs = inputs.reshape([core_dim, tokens_per_core, d_model])
         ### Perform Routing ###
 
         # router_probs: (n_cores, n_tokens, n_experts)
@@ -382,7 +382,7 @@ class MustRouterLayer(nn.Module):
 
         # expert mask: (n_cores, n_tokens, n_experts)
         # One-hot encoding of EXPERT_MASK
-        expert_mask = torch.zeros(core_dim, tokens_per_core, self.config.n_experts, device=self.device)
+        expert_mask = torch.zeros(core_dim, tokens_per_core, n_total_exps, device=self.device)
         expert_mask.scatter_(2, expert_index.unsqueeze(2), 1.0)
         expert_mask = expert_mask.long()
 
