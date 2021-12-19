@@ -435,29 +435,29 @@ class MustLayerFF(nn.Module):
         # inputs: (batch, tokens, model_dim)
 
         expert_inputs = torch.einsum("ctm,ctxp->cxpm", inputs, dispatch_tensor.float())
-        print(f"expert_inputs shape: {expert_inputs.shape}")
-        print(f"inputs shape: {inputs.shape}")
-        print(f"dispatch_tensor shape: {dispatch_tensor.shape}")
+        # print(f"expert_inputs shape: {expert_inputs.shape}")
+        # print(f"inputs shape: {inputs.shape}")
+        # print(f"dispatch_tensor shape: {dispatch_tensor.shape}")
         if self.config.xla_found:
-            print(f"all_to_all, splitting over {self.config.NUM_SHARDS} shards")
+            # print(f"all_to_all, splitting over {self.config.NUM_SHARDS} shards")
             from .dist import all_to_all
             expert_inputs = all_to_all(expert_inputs, split_dimension=1, concat_dimension=0, split_count=self.config.NUM_SHARDS)
-        print(f"expert_inputs shape after: {expert_inputs.shape}")
         ### Perform Expert Forward ###
         expert_outputs = self.experts(expert_inputs)
         # print(f"expert_outputs: {expert_outputs.shape}")
         # experts_out: cores, local_experts, capacity, d_model
         # combine_tensor: unmapped_cores, tokens, all_experts, capacity
         # final_output: (batch, tokens, d_model)
-        final_output = torch.einsum('clpm,utxp->ctm', expert_outputs, combine_tensor.float())
-        # print(f"combine_tensor: {combine_tensor.shape}")
-        # print(f"final_output: {final_output.shape}")
+        final_output = torch.einsum('clpm,utxp->utm', expert_outputs, combine_tensor.float())
+        print(f"combine_tensor: {combine_tensor.shape}")
+        print(f"export_outputs shape after: {expert_outputs.shape}")
+        print(f"final_output: {final_output.shape}")
 
 
         if self.config.xla_found:
             from .dist import all_to_all
             final_output = all_to_all(final_output, split_dimension=0, concat_dimension=1, split_count=self.config.NUM_SHARDS)
-        # print(f"final_output_after_all_to_all: {final_output.shape}")
+        print(f"final_output_after_all_to_all: {final_output.shape}")
 
         final_output = final_output.view(batch_size, seq_len, d_model)
 
