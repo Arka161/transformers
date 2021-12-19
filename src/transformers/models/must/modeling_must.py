@@ -297,16 +297,16 @@ class MustExpertsLayer(nn.Module):
 
         if config.feed_forward_proj == "relu":
             self.act = nn.ReLU()
-            self.wi = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
-            self.wo = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_ff,  self.config.d_model], dtype=torch.float32, device=self.device)
+            self.wi = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
+            self.wo = torch.zeros([self.config.n_experts, self.config.d_ff,  self.config.d_model], dtype=torch.float32, device=self.device)
             self.wi.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
             self.wo.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_ff) ** -0.5))
         elif config.feed_forward_proj == "gated-gelu":
             # TODO : replace MustDenseGatedGeluDense with an einsum implementation
             self.act = ACT2FN["gelu_new"]
-            self.wi_0 = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
-            self.wi_1 = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
-            self.wo = torch.zeros([self.config.n_experts // self.config.NUM_SHARDS, self.config.d_ff,  self.config.d_model], dtype=torch.float32, device=self.device)
+            self.wi_0 = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
+            self.wi_1 = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
+            self.wo = torch.zeros([self.config.n_experts, self.config.d_ff,  self.config.d_model], dtype=torch.float32, device=self.device)
             self.wi_0.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
             self.wi_1.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
             self.wo.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_ff) ** -0.5))
@@ -351,7 +351,7 @@ class MustRouterLayer(nn.Module):
             self.device = xm.xla_device()
         except Exception as e:
             self.device = torch.device('cpu')
-        self.linear = nn.Linear(self.config.d_model, self.config.n_experts // self.config.NUM_SHARDS, device=self.device)
+        self.linear = nn.Linear(self.config.d_model, int(self.config.n_experts * self.config.NUM_SHARDS), device=self.device)
         self.softmax = nn.Softmax(dim=-1)
 
     def compute_load_balancing_loss(self, router_probs, expert_mask):
@@ -364,10 +364,11 @@ class MustRouterLayer(nn.Module):
     def forward(self, inputs: torch.Tensor):
         ### Define Shapes ###
         batch_size, seq_len, d_model = inputs.shape
-        num_cores = self.config.NUM_SHARDS # world_size
-        tokens_per_core = int(batch_size * seq_len / num_cores)
-        expert_capacity = max(int(self.config.capacity_factor * int(batch_size * seq_len) // self.config.n_experts), 1)
-        inputs = inputs.reshape([num_cores, tokens_per_core, d_model])
+        core_dim = 1
+        n_total_exps = self.config.n_experts * self.config.NUM_SHARDS
+        tokens_per_core = int(batch_size * seq_len / self.config.NUM_SHARDS)
+        expert_capacity = max(int(self.config.capacity_factor * tokens_per_core // self.config.n_experts), 1)
+        inputs = inputs.reshape([core_dim, tokens_per_core, d_model])
         ### Perform Routing ###
 
         # router_probs: (n_cores, n_tokens, n_experts)
@@ -379,9 +380,8 @@ class MustRouterLayer(nn.Module):
         expert_gate, expert_index = router_probs.max(dim=-1)
 
         # expert mask: (n_cores, n_tokens, n_experts)
-
         # One-hot encoding of EXPERT_MASK
-        expert_mask = torch.zeros(num_cores, tokens_per_core, self.config.n_experts, device=self.device)
+        expert_mask = torch.zeros(core_dim, tokens_per_core, self.config.n_experts, device=self.device)
         expert_mask.scatter_(2, expert_index.unsqueeze(2), 1.0)
         expert_mask = expert_mask.long()
 
@@ -399,13 +399,13 @@ class MustRouterLayer(nn.Module):
         expert_gate *= expert_mask_flat
 
         # One-hot encoding of expert_index and position inf
-        expert_index_inf = torch.zeros(num_cores, tokens_per_core, self.config.n_experts, 1, device=self.device)
+        expert_index_inf = torch.zeros(core_dim, tokens_per_core, n_total_exps, 1, device=self.device)
         expert_index_inf.scatter_(1, expert_index.unsqueeze(2).unsqueeze(3), 1.0)
-        position_inf = torch.zeros(num_cores, tokens_per_core, self.config.n_experts, expert_capacity, device=self.device)
+        position_inf = torch.zeros(core_dim, tokens_per_core, n_total_exps, expert_capacity, device=self.device)
         position_inf.scatter_(3, position_in_expert.unsqueeze(3), 1.0)
 
         # combine_tensor: (n_cores, n_tokens, n_experts, expert_capacity)
-        combine_tensor = expert_gate.reshape(num_cores, tokens_per_core, 1, 1) * expert_mask_flat.reshape(num_cores, tokens_per_core, 1, 1) * expert_index_inf * position_inf
+        combine_tensor = expert_gate.reshape(core_dim, tokens_per_core, 1, 1) * expert_mask_flat.reshape(core_dim, tokens_per_core, 1, 1) * expert_index_inf * position_inf
         dispatch_tensor = combine_tensor.bool()
         return dispatch_tensor, combine_tensor, aux_loss
 
@@ -425,18 +425,18 @@ class MustLayerFF(nn.Module):
 
         inputs = inputs.to(torch.float32)
         batch_size, seq_len, d_model = inputs.shape
-        num_cores = self.config.NUM_SHARDS # world_size
+        core_dim = 1
         inputs = inputs * torch.zeros_like(inputs, device=inputs.device).uniform_(1 - self.epsilon,  1 + self.epsilon)
         inputs = self.layer_norm(inputs)
 
         dispatch_tensor, combine_tensor, aux_loss = self.router_layer(inputs)
         # expert_inputs: (n_cores, n_experts, expert_capacity, d_model)
         # inputs: (batch, tokens, model_dim)
-        inputs = inputs.reshape([num_cores, batch_size * seq_len, d_model])
+        inputs = inputs.reshape([core_dim, batch_size * seq_len, d_model])
         expert_inputs = torch.einsum("ctm,ctxp->cxpm", inputs, dispatch_tensor.float())
         if self.config.xla_found:
             from .dist import all_to_all
-            all_to_all(expert_inputs, split_dimension=0, concat_dimension=1, split_count=num_cores)
+            all_to_all(expert_inputs, split_dimension=1, concat_dimension=0, split_count=self.config.NUM_SHARDS)
 
         ### Perform Expert Forward ###
         expert_outputs = self.experts(expert_inputs)
@@ -449,7 +449,7 @@ class MustLayerFF(nn.Module):
 
         if self.config.xla_found:
             from .dist import all_to_all
-            all_to_all(final_output, split_dimension=1, concat_dimension=0, split_count=num_cores)
+            all_to_all(final_output, split_dimension=0, concat_dimension=1, split_count=self.config.NUM_SHARDS)
         final_output = final_output.view(batch_size, seq_len, d_model)
 
         output = inputs.reshape(batch_size, seq_len, d_model) + self.dropout(final_output)
