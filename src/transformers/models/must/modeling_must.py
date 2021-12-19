@@ -365,7 +365,6 @@ class MustRouterLayer(nn.Module):
         ### Define Shapes ###
         core_dim, tokens_per_core, d_model = inputs.shape
         n_total_exps = self.config.n_experts * self.config.NUM_SHARDS
-        tokens_per_core = int(tokens_per_core/ self.config.NUM_SHARDS)
         expert_capacity = max(int(self.config.capacity_factor * tokens_per_core // self.config.n_experts), 1)
         inputs = inputs.reshape([core_dim, tokens_per_core, d_model])
         ### Perform Routing ###
