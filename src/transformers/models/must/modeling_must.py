@@ -404,7 +404,6 @@ class MustRouterLayer(nn.Module):
         expert_index_inf.scatter_(1, expert_index.unsqueeze(2).unsqueeze(3), 1.0)
         position_inf = torch.zeros(core_dim, tokens_per_core, n_total_exps, expert_capacity, device=self.device)
         position_inf.scatter_(3, position_in_expert.unsqueeze(3), 1.0)
-
         # combine_tensor: (n_cores, n_tokens, n_experts, expert_capacity)
         combine_tensor = expert_gate.reshape(core_dim, tokens_per_core, 1, 1) * expert_mask_flat.reshape(core_dim, tokens_per_core, 1, 1) * expert_index_inf * position_inf
         dispatch_tensor = combine_tensor.bool()
@@ -427,13 +426,14 @@ class MustLayerFF(nn.Module):
         inputs = inputs.to(torch.float32)
         batch_size, seq_len, d_model = inputs.shape
         core_dim = 1
+        inputs = inputs.reshape([core_dim, batch_size * seq_len, d_model])
         inputs = inputs * torch.zeros_like(inputs, device=inputs.device).uniform_(1 - self.epsilon,  1 + self.epsilon)
         inputs = self.layer_norm(inputs)
 
         dispatch_tensor, combine_tensor, aux_loss = self.router_layer(inputs)
         # expert_inputs: (n_cores, n_experts, expert_capacity, d_model)
         # inputs: (batch, tokens, model_dim)
-        inputs = inputs.reshape([core_dim, batch_size * seq_len, d_model])
+
         expert_inputs = torch.einsum("ctm,ctxp->cxpm", inputs, dispatch_tensor.float())
         if self.config.xla_found:
             from .dist import all_to_all
