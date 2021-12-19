@@ -441,7 +441,7 @@ class MustLayerFF(nn.Module):
         if self.config.xla_found:
             print(f"all_to_all, splitting over {self.config.NUM_SHARDS} shards")
             from .dist import all_to_all
-            all_to_all(expert_inputs, split_dimension=1, concat_dimension=0, split_count=self.config.NUM_SHARDS)
+            expert_inputs = all_to_all(expert_inputs, split_dimension=1, concat_dimension=0, split_count=self.config.NUM_SHARDS)
         print(f"expert_inputs shape after: {expert_inputs.shape}")
         ### Perform Expert Forward ###
         expert_outputs = self.experts(expert_inputs)
@@ -456,7 +456,7 @@ class MustLayerFF(nn.Module):
 
         if self.config.xla_found:
             from .dist import all_to_all
-            all_to_all(final_output, split_dimension=0, concat_dimension=1, split_count=self.config.NUM_SHARDS)
+            final_output = all_to_all(final_output, split_dimension=0, concat_dimension=1, split_count=self.config.NUM_SHARDS)
         # print(f"final_output_after_all_to_all: {final_output.shape}")
 
         final_output = final_output.view(batch_size, seq_len, d_model)
