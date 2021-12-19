@@ -447,8 +447,7 @@ class MustLayerFF(nn.Module):
         # print(f"expert_outputs: {expert_outputs.shape}")
         # experts_out: cores, local_experts, capacity, d_model
         # combine_tensor: unmapped_cores, tokens, all_experts, capacity
-        # final_output: (batch, tokens, d_model)
-        final_output = torch.einsum('clpm,utxp->utm', expert_outputs, combine_tensor.float())
+        final_output = torch.einsum('clpm,utxp->clm', expert_outputs, combine_tensor.float())
         print(f"combine_tensor: {combine_tensor.shape}")
         print(f"export_outputs shape after: {expert_outputs.shape}")
         print(f"final_output: {final_output.shape}")
