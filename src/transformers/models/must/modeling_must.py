@@ -1665,6 +1665,7 @@ class MustForConditionalGeneration(MustPreTrainedModel):
 
         lm_logits = self.lm_head(sequence_output)
         loss = None
+        aux_loss = None
         if labels is not None:
             loss_fct = CrossEntropyLoss(ignore_index=-100)
             loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
