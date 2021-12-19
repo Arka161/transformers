@@ -448,15 +448,15 @@ class MustLayerFF(nn.Module):
         print(f"expert_outputs: {expert_outputs.shape}")
         # experts_out: cores, local_experts, capacity, d_model
         # combine_tensor: unmapped_cores, tokens, all_experts, capacity
-        final_output = torch.einsum('clpm,utxp->ctm', expert_outputs, combine_tensor.float())
+
+        if self.config.xla_found:
+            from .dist import all_to_all
+            expert_outputs = all_to_all(expert_outputs, split_dimension=0, concat_dimension=1, split_count=self.config.NUM_SHARDS)
+        final_output = torch.einsum('cxpm,ctxp->ctm', expert_outputs, combine_tensor.float())
         print(f"combine_tensor: {combine_tensor.shape}")
         print(f"export_outputs shape after: {expert_outputs.shape}")
         print(f"final_output: {final_output.shape}")
 
-
-        if self.config.xla_found:
-            from .dist import all_to_all
-            final_output = all_to_all(final_output, split_dimension=0, concat_dimension=1, split_count=self.config.NUM_SHARDS)
         print(f"final_output_after_all_to_all: {final_output.shape}")
 
         final_output = final_output.view(batch_size, seq_len, d_model)
