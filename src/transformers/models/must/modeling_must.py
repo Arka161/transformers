@@ -355,9 +355,11 @@ class MustRouterLayer(nn.Module):
         self.softmax = nn.Softmax(dim=-1)
 
     def compute_load_balancing_loss(self, router_probs, expert_mask):
+        print(f"expert_mask: {expert_mask.shape}")
+        print(f"router_probs: {router_probs.shape}")
         # Get proportion of tokens routed to each expert, TODO reduce across cores
-        density1 = expert_mask.float().mean(dim=1)
-        density1_proxy = router_probs.mean(dim=1)
+        density1 = expert_mask.float().mean(dim=0).mean(dim=0)
+        density1_proxy = router_probs.mean(dim=1).mean(dim=0)
         loss = (density1 * density1_proxy) * (self.config.n_experts ** 2)
         return loss
 
@@ -371,6 +373,7 @@ class MustRouterLayer(nn.Module):
 
         # router_probs: (n_cores, n_tokens, n_experts)
         router_logits = self.linear(inputs)
+        print(f"router_logits shape: {router_logits.shape}")
         router_probs = self.softmax(router_logits)
 
         ### Setup Expert Inputs and Dispatch tensor ###
