@@ -355,8 +355,8 @@ class MustRouterLayer(nn.Module):
         self.softmax = nn.Softmax(dim=-1)
 
     def compute_load_balancing_loss(self, router_probs, expert_mask):
-        print(f"expert_mask: {expert_mask.shape}")
-        print(f"router_probs: {router_probs.shape}")
+        # print(f"expert_mask: {expert_mask.shape}")
+        # print(f"router_probs: {router_probs.shape}")
         # Get proportion of tokens routed to each expert, TODO reduce across cores
         n_total_exps = expert_mask.shape[2]
         density1 = expert_mask.float().mean(dim=1)
@@ -373,7 +373,7 @@ class MustRouterLayer(nn.Module):
 
         # router_probs: (n_cores, n_tokens, n_experts)
         router_logits = self.linear(inputs)
-        print(f"router_logits shape: {router_logits.shape}")
+        # print(f"router_logits shape: {router_logits.shape}")
         router_probs = self.softmax(router_logits)
 
         ### Setup Expert Inputs and Dispatch tensor ###
@@ -435,17 +435,17 @@ class MustLayerFF(nn.Module):
         # inputs: (batch, tokens, model_dim)
 
         expert_inputs = torch.einsum("ctm,ctxp->cxpm", inputs, dispatch_tensor.float())
-        print(f"expert_inputs shape: {expert_inputs.shape}")
-        print(f"inputs shape: {inputs.shape}")
-        print(f"dispatch_tensor shape: {dispatch_tensor.shape}")
+        # print(f"expert_inputs shape: {expert_inputs.shape}")
+        # print(f"inputs shape: {inputs.shape}")
+        # print(f"dispatch_tensor shape: {dispatch_tensor.shape}")
         if self.config.xla_found:
             # print(f"all_to_all, splitting over {self.config.NUM_SHARDS} shards")
             from .dist import all_to_all
             expert_inputs = all_to_all(expert_inputs, split_dimension=1, concat_dimension=0, split_count=self.config.NUM_SHARDS)
-        print(f"expert_inputs after all_to_all: {expert_inputs.shape}")
+        # print(f"expert_inputs after all_to_all: {expert_inputs.shape}")
         ### Perform Expert Forward ###
         expert_outputs = self.experts(expert_inputs)
-        print(f"expert_outputs: {expert_outputs.shape}")
+        # print(f"expert_outputs: {expert_outputs.shape}")
         # experts_out: cores, local_experts, capacity, d_model
         # combine_tensor: unmapped_cores, tokens, all_experts, capacity
 
@@ -453,11 +453,10 @@ class MustLayerFF(nn.Module):
             from .dist import all_to_all
             expert_outputs = all_to_all(expert_outputs, split_dimension=0, concat_dimension=1, split_count=self.config.NUM_SHARDS)
         final_output = torch.einsum('cxpm,ctxp->ctm', expert_outputs, combine_tensor.float())
-        print(f"combine_tensor: {combine_tensor.shape}")
-        print(f"export_outputs shape after: {expert_outputs.shape}")
-        print(f"final_output: {final_output.shape}")
-
-        print(f"final_output_after_all_to_all: {final_output.shape}")
+        # print(f"combine_tensor: {combine_tensor.shape}")
+        # print(f"export_outputs shape after: {expert_outputs.shape}")
+        #
+        # print(f"final_output_after_all_to_all: {final_output.shape}")
 
         final_output = final_output.view(batch_size, seq_len, d_model)
 
