@@ -448,7 +448,7 @@ class SwitchLayerFF(nn.Module):
 
         if self.config.xla_found:
             from .dist import all_to_all
-            expert_outputs = all_to_all(expert_outputs, split_dimension=0, concat_dimension=1, split_count=num_cores)
+            expert_outputs = all_to_all(expert_outputs, split_dimension=0, concat_dimension=1, split_count=self.config.NUM_SHARDS)
 
         final_output = torch.einsum('cxpm,ctxp->ctm', expert_outputs, combine_tensor.float())
 
