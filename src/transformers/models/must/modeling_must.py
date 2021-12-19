@@ -441,19 +441,19 @@ class MustLayerFF(nn.Module):
 
         ### Perform Expert Forward ###
         expert_outputs = self.experts(expert_inputs)
-        print(f"expert_outputs: {expert_outputs.shape}")
+        # print(f"expert_outputs: {expert_outputs.shape}")
         # experts_out: cores, experts, capacity, d_model
         # combine_tensor: cores, tokens, experts, capacity
         # final_output: (batch, tokens, d_model)
         final_output = torch.einsum('cxpm,ctxp->ctm', expert_outputs, combine_tensor.float())
-        print(f"combine_tensor: {combine_tensor.shape}")
-        print(f"final_output: {final_output.shape}")
+        # print(f"combine_tensor: {combine_tensor.shape}")
+        # print(f"final_output: {final_output.shape}")
 
 
         if self.config.xla_found:
             from .dist import all_to_all
             all_to_all(final_output, split_dimension=0, concat_dimension=1, split_count=self.config.NUM_SHARDS)
-        print(f"final_output_after_all_to_all: {final_output.shape}")
+        # print(f"final_output_after_all_to_all: {final_output.shape}")
 
         final_output = final_output.view(batch_size, seq_len, d_model)
 
