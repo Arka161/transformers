@@ -302,7 +302,8 @@ class T5LayerFF(nn.Module):
         forwarded_states = self.layer_norm(hidden_states)
         forwarded_states = self.DenseReluDense(forwarded_states)
         hidden_states = hidden_states + self.dropout(forwarded_states)
-        return hidden_states
+        aux_loss = 0.
+        return hidden_states, aux_loss
 
 class SwitchExpertsLayer(nn.Module):
     def __init__(self, config: SwitchConfig, layer_id):
