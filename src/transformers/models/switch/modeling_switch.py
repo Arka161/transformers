@@ -302,7 +302,7 @@ class T5LayerFF(nn.Module):
         forwarded_states = self.layer_norm(hidden_states)
         forwarded_states = self.DenseReluDense(forwarded_states)
         hidden_states = hidden_states + self.dropout(forwarded_states)
-        aux_loss = 0.
+        aux_loss = torch.tensor(0.).to(hidden_states.device)
         return hidden_states, aux_loss
 
 class SwitchExpertsLayer(nn.Module):
