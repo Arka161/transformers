@@ -303,7 +303,7 @@ class T5LayerFF(nn.Module):
         forwarded_states = self.layer_norm(hidden_states)
         forwarded_states = self.DenseReluDense(forwarded_states)
         hidden_states = hidden_states + self.dropout(forwarded_states)
-        aux_loss = torch.zeros((1, self.config.n_experts*self.config.NUM_SHARDS)).to(hidden_states.device)
+        aux_loss = torch.zeros(1).to(hidden_states.device)
         return hidden_states, aux_loss
 
 class SwitchExpertsLayer(nn.Module):
@@ -384,10 +384,17 @@ class SwitchRouterLayer(nn.Module):
     def compute_load_balancing_loss(self, router_probs, expert_mask):
         # Get proportion of tokens routed to each expert, TODO reduce across cores
         n_total_exps = expert_mask.shape[2]
+        if self.config.xla_found:
+            import torch_xla.core.xla_model as xm
+            expert_mask = xm.all_reduce(xm.REDUCE_SUM, expert_mask.float(), scale=1.0 / self.NUM_SHARDS)
         density1 = expert_mask.float().mean(dim=1)
+        if self.config.xla_found:
+            router_probs = xm.all_reduce(xm.REDUCE_SUM, router_probs, scale=1.0 / self.NUM_SHARDS)
         density1_proxy = router_probs.mean(dim=1)
-        loss = (density1 * density1_proxy) * (n_total_exps ** 2)
-
+        if self.config.xla_found:
+            loss = xm.all_reduce(xm.REDUCE_SUM, (density1 * density1_proxy), scale=1.0 / self.NUM_SHARDS) * (n_total_exps ** 2)
+        else:
+            loss = (density1 * density1_proxy).sum() * (n_total_exps ** 2)
         return loss
 
     def forward(self, inputs):
@@ -1842,6 +1849,7 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
             loss_fct = CrossEntropyLoss(ignore_index=-100)
             loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
             aux_loss = self.config.load_balancing_loss_coef * (torch.stack(encoder_aux_losses).sum() + torch.stack(decoder_aux_losses).sum())
+
             loss = loss + aux_loss
         if not return_dict:
             output = (lm_logits,) + decoder_outputs[1:] + encoder_outputs
