@@ -344,7 +344,7 @@ class MustExpertsLayer(nn.Module):
 
 
 class MustRouterLayer(nn.Module):
-    def __init__(self, config: MustConfig, timestep=0):
+    def __init__(self, config: MustConfig, timestep):
         super().__init__()
         self.epsilon = 1e-6
         self.config = config
@@ -355,13 +355,13 @@ class MustRouterLayer(nn.Module):
             self.device = xm.xla_device()
         except Exception as e:
             self.device = torch.device('cpu')
-
-        if "X-must" in config.model_type:
-            torch.manual_seed(self.config.seed + self.config.GLOBAL_RANK + (timestep+10))
+        # Want X-MUST to have different router weights for each timestep and each core
+        # Want N-MUSt to have same router weights for each core, so put seed the same
+        if "N-must" in config.model_type:
+            torch.manual_seed(self.config.seed + (self.timestep+10))
 
         self.linear = nn.Linear(self.config.d_model, int(self.config.n_experts * self.config.NUM_SHARDS),
                                 device=self.device)
-        print(f"Router Layer: time_step: {timestep}, {self.linear.weight.sum()}")
 
         self.softmax = nn.Softmax(dim=-1)
 
@@ -432,7 +432,7 @@ class MustLayerFF(nn.Module):
         self.layer_norm = MustLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
         if "1-must" in config.model_type:
-            self.router_layers = MustRouterLayer(config)
+            self.router_layers = MustRouterLayer(config, timestep=0)
         elif "N-must" or "X-must" in config.model_type:
             self.router_layers = nn.ModuleList([MustRouterLayer(config, timestep) for timestep in range(config.num_timesteps)])
 
