@@ -313,7 +313,7 @@ class SwitchExpertsLayer(nn.Module):
         self.config = config
         self.layer_id = layer_id
         # set seed to unique value to initialize experts
-        torch.manual_seed(self.config.seed * layer_id * self.config.GLOBAL_RANK * 10000)
+        torch.manual_seed(self.config.seed * (100 + layer_id) * (1000 + self.config.GLOBAL_RANK))
         try:
             import torch_xla.core.xla_model as xm
             self.device = xm.xla_device()
@@ -339,8 +339,6 @@ class SwitchExpertsLayer(nn.Module):
             raise ValueError(
                 f"{self.config.feed_forward_proj} is not supported. Choose between `relu` and `gated-gelu`"
             )
-        # reset seed to default
-        torch.manual_seed(self.config.seed)
 
         self.layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)

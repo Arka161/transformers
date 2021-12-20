@@ -287,7 +287,7 @@ class MustExpertsLayer(nn.Module):
         self.epsilon = 1e-6
         self.config = config
         # set seed to unique value to initialize experts
-        torch.manual_seed(self.config.seed * self.config.GLOBAL_RANK)
+        torch.manual_seed(self.config.seed * 1000 + self.config.GLOBAL_RANK)
         try:
             import torch_xla.core.xla_model as xm
             self.device = xm.xla_device()
@@ -318,8 +318,6 @@ class MustExpertsLayer(nn.Module):
             raise ValueError(
                 f"{self.config.feed_forward_proj} is not supported. Choose between `relu` and `gated-gelu`"
             )
-        # reset seed to default
-        torch.manual_seed(self.config.seed)
 
         self.layer_norm = MustLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
@@ -350,7 +348,8 @@ class MustRouterLayer(nn.Module):
         super().__init__()
         self.epsilon = 1e-6
         self.config = config
-        self.timestep = 0
+
+        self.timestep = timestep
         try:
             import torch_xla.core.xla_model as xm
             self.device = xm.xla_device()
@@ -358,12 +357,11 @@ class MustRouterLayer(nn.Module):
             self.device = torch.device('cpu')
 
         if "X-must" in config.model_type:
-            torch.manual_seed(self.config.seed * self.config.GLOBAL_RANK * (timestep+10))
+            torch.manual_seed(self.config.seed + self.config.GLOBAL_RANK + (timestep+10))
 
         self.linear = nn.Linear(self.config.d_model, int(self.config.n_experts * self.config.NUM_SHARDS),
                                 device=self.device)
-
-        torch.manual_seed(self.config.seed)
+        print(f"Router Layer: time_step: {timestep}, {self.linear.weight.sum()}")
 
         self.softmax = nn.Softmax(dim=-1)
 
