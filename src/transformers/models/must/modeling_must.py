@@ -346,10 +346,11 @@ class MustExpertsLayer(nn.Module):
 
 
 class MustRouterLayer(nn.Module):
-    def __init__(self, config: MustConfig):
+    def __init__(self, config: MustConfig, timestep=0):
         super().__init__()
         self.epsilon = 1e-6
         self.config = config
+        self.timestep = 0
         try:
             import torch_xla.core.xla_model as xm
             self.device = xm.xla_device()
@@ -357,13 +358,12 @@ class MustRouterLayer(nn.Module):
             self.device = torch.device('cpu')
 
         if "X-must" in config.model_type:
-            torch.manual_seed(self.config.seed * self.config.GLOBAL_RANK)
+            torch.manual_seed(self.config.seed * self.config.GLOBAL_RANK * (timestep+10))
 
         self.linear = nn.Linear(self.config.d_model, int(self.config.n_experts * self.config.NUM_SHARDS),
                                 device=self.device)
 
-        if "X-must" in config.model_type:
-            torch.manual_seed(self.config.seed)
+        torch.manual_seed(self.config.seed)
 
         self.softmax = nn.Softmax(dim=-1)
 
@@ -436,7 +436,7 @@ class MustLayerFF(nn.Module):
         if "1-must" in config.model_type:
             self.router_layers = MustRouterLayer(config)
         elif "N-must" or "X-MUST" in config.model_type:
-            self.router_layers = nn.ModuleList([MustRouterLayer(config) for _ in range(config.num_timesteps)])
+            self.router_layers = nn.ModuleList([MustRouterLayer(config, timestep) for timestep in range(config.num_timesteps)])
 
         self.experts = MustExpertsLayer(config)
 
