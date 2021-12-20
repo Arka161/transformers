@@ -282,6 +282,28 @@ class SwitchDenseGatedGeluDense(nn.Module):
         hidden_states = self.wo(hidden_states)
         return hidden_states
 
+
+class T5LayerFF(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        if config.feed_forward_proj == "relu":
+            self.DenseReluDense = SwitchDenseReluDense(config)
+        elif config.feed_forward_proj == "gated-gelu":
+            self.DenseReluDense = SwitchDenseGatedGeluDense(config)
+        else:
+            raise ValueError(
+                f"{self.config.feed_forward_proj} is not supported. Choose between `relu` and `gated-gelu`"
+            )
+
+        self.layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
+        self.dropout = nn.Dropout(config.dropout_rate)
+
+    def forward(self, hidden_states):
+        forwarded_states = self.layer_norm(hidden_states)
+        forwarded_states = self.DenseReluDense(forwarded_states)
+        hidden_states = hidden_states + self.dropout(forwarded_states)
+        return hidden_states
+
 class SwitchExpertsLayer(nn.Module):
     def __init__(self, config: SwitchConfig, layer_id):
         super().__init__()
@@ -762,7 +784,11 @@ class SwitchBlock(nn.Module):
         self.layer.append(SwitchLayerSelfAttention(config, has_relative_attention_bias=has_relative_attention_bias))
         if self.is_decoder:
             self.layer.append(SwitchLayerCrossAttention(config))
-        self.layer.append(SwitchLayerFF(config, layer_id))
+        if layer_id % 2 == 0:
+            self.layer.append(SwitchLayerFF(config, layer_id))
+        else:
+            self.layer.append(T5LayerFF(config))
+
 
     def forward(
         self,

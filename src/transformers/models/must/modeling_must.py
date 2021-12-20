@@ -14,7 +14,6 @@
 # limitations under the License.
 """ PyTorch MUST model. """
 
-
 import copy
 import math
 import os
@@ -46,7 +45,6 @@ from ...modeling_utils import PreTrainedModel, find_pruneable_heads_and_indices,
 from ...utils import logging
 from ...utils.model_parallel_utils import assert_device_map, get_device_map
 from .configuration_must import MustConfig
-
 
 logger = logging.get_logger(__name__)
 
@@ -102,8 +100,8 @@ def load_tf_weights_in_must(model, config, tf_checkpoint_path):
         # adam_v and adam_m are variables used in AdamWeightDecayOptimizer to calculated m and v
         # which are not required for using pretrained model
         if any(
-            n in ["adam_v", "adam_m", "AdamWeightDecayOptimizer", "AdamWeightDecayOptimizer_1", "global_step"]
-            for n in name
+                n in ["adam_v", "adam_m", "AdamWeightDecayOptimizer", "AdamWeightDecayOptimizer_1", "global_step"]
+                for n in name
         ):
             logger.info(f"Skipping {'/'.join(name)}")
             tf_weights.pop(txt_name, None)
@@ -165,7 +163,7 @@ def load_tf_weights_in_must(model, config, tf_checkpoint_path):
             array = np.transpose(array)
         try:
             assert (
-                pointer.shape == array.shape
+                    pointer.shape == array.shape
             ), f"Pointer shape {pointer.shape} and array shape {array.shape} mismatched"
         except AssertionError as e:
             e.args += (pointer.shape, array.shape)
@@ -282,6 +280,7 @@ class MustDenseGatedGeluDense(nn.Module):
         hidden_states = self.wo(hidden_states)
         return hidden_states
 
+
 class MustExpertsLayer(nn.Module):
     def __init__(self, config: MustConfig):
         super().__init__()
@@ -297,16 +296,21 @@ class MustExpertsLayer(nn.Module):
 
         if config.feed_forward_proj == "relu":
             self.act = nn.ReLU()
-            self.wi = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
-            self.wo = torch.zeros([self.config.n_experts, self.config.d_ff,  self.config.d_model], dtype=torch.float32, device=self.device)
+            self.wi = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32,
+                                  device=self.device)
+            self.wo = torch.zeros([self.config.n_experts, self.config.d_ff, self.config.d_model], dtype=torch.float32,
+                                  device=self.device)
             self.wi.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
             self.wo.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_ff) ** -0.5))
         elif config.feed_forward_proj == "gated-gelu":
             # TODO : replace MustDenseGatedGeluDense with an einsum implementation
             self.act = ACT2FN["gelu_new"]
-            self.wi_0 = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
-            self.wi_1 = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
-            self.wo = torch.zeros([self.config.n_experts, self.config.d_ff,  self.config.d_model], dtype=torch.float32, device=self.device)
+            self.wi_0 = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32,
+                                    device=self.device)
+            self.wi_1 = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32,
+                                    device=self.device)
+            self.wo = torch.zeros([self.config.n_experts, self.config.d_ff, self.config.d_model], dtype=torch.float32,
+                                  device=self.device)
             self.wi_0.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
             self.wi_1.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
             self.wo.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_ff) ** -0.5))
@@ -319,7 +323,6 @@ class MustExpertsLayer(nn.Module):
 
         self.layer_norm = MustLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
-
 
     def forward(self, expert_inputs):
         if self.config.feed_forward_proj == "relu":
@@ -341,6 +344,7 @@ class MustExpertsLayer(nn.Module):
             raise Exception("Unknown feed forward projection")
         return expert_outputs
 
+
 class MustRouterLayer(nn.Module):
     def __init__(self, config: MustConfig):
         super().__init__()
@@ -351,7 +355,8 @@ class MustRouterLayer(nn.Module):
             self.device = xm.xla_device()
         except Exception as e:
             self.device = torch.device('cpu')
-        self.linear = nn.Linear(self.config.d_model, int(self.config.n_experts * self.config.NUM_SHARDS), device=self.device)
+        self.linear = nn.Linear(self.config.d_model, int(self.config.n_experts * self.config.NUM_SHARDS),
+                                device=self.device)
         self.softmax = nn.Softmax(dim=-1)
 
     def compute_load_balancing_loss(self, router_probs, expert_mask):
@@ -405,9 +410,13 @@ class MustRouterLayer(nn.Module):
         position_inf = torch.zeros(core_dim, tokens_per_core, n_total_exps, expert_capacity, device=self.device)
         position_inf.scatter_(3, position_in_expert.unsqueeze(3), 1.0)
         # combine_tensor: (n_cores, n_tokens, n_experts, expert_capacity)
-        combine_tensor = expert_gate.reshape(core_dim, tokens_per_core, 1, 1) * expert_mask_flat.reshape(core_dim, tokens_per_core, 1, 1) * expert_index_inf * position_inf
+        combine_tensor = expert_gate.reshape(core_dim, tokens_per_core, 1, 1) * expert_mask_flat.reshape(core_dim,
+                                                                                                         tokens_per_core,
+                                                                                                         1,
+                                                                                                         1) * expert_index_inf * position_inf
         dispatch_tensor = combine_tensor.bool()
         return dispatch_tensor, combine_tensor, aux_loss
+
 
 class MustLayerFF(nn.Module):
     def __init__(self, config: MustConfig):
@@ -419,7 +428,6 @@ class MustLayerFF(nn.Module):
         self.router_layer = MustRouterLayer(config)
         self.experts = MustExpertsLayer(config)
 
-
     def forward(self, inputs: torch.Tensor):
         # mixed precision
 
@@ -427,7 +435,7 @@ class MustLayerFF(nn.Module):
         batch_size, seq_len, d_model = inputs.shape
         core_dim = 1
         inputs = inputs.reshape([core_dim, batch_size * seq_len, d_model])
-        inputs = inputs * torch.zeros_like(inputs, device=inputs.device).uniform_(1 - self.epsilon,  1 + self.epsilon)
+        inputs = inputs * torch.zeros_like(inputs, device=inputs.device).uniform_(1 - self.epsilon, 1 + self.epsilon)
         inputs = self.layer_norm(inputs)
 
         dispatch_tensor, combine_tensor, aux_loss = self.router_layer(inputs)
@@ -441,7 +449,8 @@ class MustLayerFF(nn.Module):
         if self.config.xla_found:
             # print(f"all_to_all, splitting over {self.config.NUM_SHARDS} shards")
             from .dist import all_to_all
-            expert_inputs = all_to_all(expert_inputs, split_dimension=1, concat_dimension=0, split_count=self.config.NUM_SHARDS)
+            expert_inputs = all_to_all(expert_inputs, split_dimension=1, concat_dimension=0,
+                                       split_count=self.config.NUM_SHARDS)
         # print(f"expert_inputs after all_to_all: {expert_inputs.shape}")
         ### Perform Expert Forward ###
         expert_outputs = self.experts(expert_inputs)
@@ -451,7 +460,8 @@ class MustLayerFF(nn.Module):
 
         if self.config.xla_found:
             from .dist import all_to_all
-            expert_outputs = all_to_all(expert_outputs, split_dimension=0, concat_dimension=1, split_count=self.config.NUM_SHARDS)
+            expert_outputs = all_to_all(expert_outputs, split_dimension=0, concat_dimension=1,
+                                        split_count=self.config.NUM_SHARDS)
         final_output = torch.einsum('cxpm,ctxp->ctm', expert_outputs, combine_tensor.float())
         # print(f"combine_tensor: {combine_tensor.shape}")
         # print(f"export_outputs shape after: {expert_outputs.shape}")
@@ -466,7 +476,6 @@ class MustLayerFF(nn.Module):
             output,
             aux_loss
         )
-
 
 
 class MustAttention(nn.Module):
@@ -546,9 +555,9 @@ class MustAttention(nn.Module):
 
         # The other half of the buckets are for logarithmically bigger bins in positions up to max_distance
         relative_postion_if_large = max_exact + (
-            torch.log(relative_position.float() / max_exact)
-            / math.log(max_distance / max_exact)
-            * (num_buckets - max_exact)
+                torch.log(relative_position.float() / max_exact)
+                / math.log(max_distance / max_exact)
+                * (num_buckets - max_exact)
         ).to(torch.long)
         relative_postion_if_large = torch.min(
             relative_postion_if_large, torch.full_like(relative_postion_if_large, num_buckets - 1)
@@ -576,16 +585,16 @@ class MustAttention(nn.Module):
         return values
 
     def forward(
-        self,
-        hidden_states,
-        mask=None,
-        key_value_states=None,
-        position_bias=None,
-        past_key_value=None,
-        layer_head_mask=None,
-        query_length=None,
-        use_cache=False,
-        output_attentions=False,
+            self,
+            hidden_states,
+            mask=None,
+            key_value_states=None,
+            position_bias=None,
+            past_key_value=None,
+            layer_head_mask=None,
+            query_length=None,
+            use_cache=False,
+            output_attentions=False,
     ):
         """
         Self-attention (if key_value_states is None) or attention over source sentence (provided by key_value_states).
@@ -600,8 +609,8 @@ class MustAttention(nn.Module):
 
         if past_key_value is not None:
             assert (
-                len(past_key_value) == 2
-            ), f"past_key_value should have 2 past states: keys and values. Got { len(past_key_value)} past states"
+                    len(past_key_value) == 2
+            ), f"past_key_value should have 2 past states: keys and values. Got {len(past_key_value)} past states"
             real_seq_length += past_key_value[0].shape[2] if query_length is None else query_length
 
         key_length = real_seq_length if key_value_states is None else key_value_states.shape[1]
@@ -664,7 +673,7 @@ class MustAttention(nn.Module):
             # if key and values are already calculated
             # we want only the last query position bias
             if past_key_value is not None:
-                position_bias = position_bias[:, :, -hidden_states.size(1) :, :]
+                position_bias = position_bias[:, :, -hidden_states.size(1):, :]
 
             if mask is not None:
                 position_bias = position_bias + mask  # (batch_size, n_heads, seq_length, key_length)
@@ -700,14 +709,14 @@ class MustLayerSelfAttention(nn.Module):
         self.dropout = nn.Dropout(config.dropout_rate)
 
     def forward(
-        self,
-        hidden_states,
-        attention_mask=None,
-        position_bias=None,
-        layer_head_mask=None,
-        past_key_value=None,
-        use_cache=False,
-        output_attentions=False,
+            self,
+            hidden_states,
+            attention_mask=None,
+            position_bias=None,
+            layer_head_mask=None,
+            past_key_value=None,
+            use_cache=False,
+            output_attentions=False,
     ):
         normed_hidden_states = self.layer_norm(hidden_states)
         attention_output = self.SelfAttention(
@@ -732,16 +741,16 @@ class MustLayerCrossAttention(nn.Module):
         self.dropout = nn.Dropout(config.dropout_rate)
 
     def forward(
-        self,
-        hidden_states,
-        key_value_states,
-        attention_mask=None,
-        position_bias=None,
-        layer_head_mask=None,
-        past_key_value=None,
-        use_cache=False,
-        query_length=None,
-        output_attentions=False,
+            self,
+            hidden_states,
+            key_value_states,
+            attention_mask=None,
+            position_bias=None,
+            layer_head_mask=None,
+            past_key_value=None,
+            use_cache=False,
+            query_length=None,
+            output_attentions=False,
     ):
         normed_hidden_states = self.layer_norm(hidden_states)
         attention_output = self.EncDecAttention(
@@ -773,19 +782,19 @@ class MustBlock(nn.Module):
         self.layer.append(MustLayerFF(config))
 
     def forward(
-        self,
-        hidden_states,
-        attention_mask=None,
-        position_bias=None,
-        encoder_hidden_states=None,
-        encoder_attention_mask=None,
-        encoder_decoder_position_bias=None,
-        layer_head_mask=None,
-        cross_attn_layer_head_mask=None,
-        past_key_value=None,
-        use_cache=False,
-        output_attentions=False,
-        return_dict=True,
+            self,
+            hidden_states,
+            attention_mask=None,
+            position_bias=None,
+            encoder_hidden_states=None,
+            encoder_attention_mask=None,
+            encoder_decoder_position_bias=None,
+            layer_head_mask=None,
+            cross_attn_layer_head_mask=None,
+            past_key_value=None,
+            use_cache=False,
+            output_attentions=False,
+            return_dict=True,
     ):
 
         if past_key_value is not None:
@@ -872,6 +881,7 @@ class MustBlock(nn.Module):
         outputs = outputs + (aux_losses,)
         return outputs  # hidden-states, present_key_value_states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
 
+
 class MustPreTrainedModel(PreTrainedModel):
     """
     An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
@@ -946,7 +956,7 @@ class MustPreTrainedModel(PreTrainedModel):
         pad_token_id = self.config.pad_token_id
 
         assert (
-            decoder_start_token_id is not None
+                decoder_start_token_id is not None
         ), "self.model.config.decoder_start_token_id has to be defined. In Must it is usually set to the pad_token_id. See Must docs for more information"
 
         # shift inputs to the right
@@ -989,19 +999,20 @@ class MustStack(MustPreTrainedModel):
         self.embed_tokens = new_embeddings
 
     def forward(
-        self,
-        input_ids=None,
-        attention_mask=None,
-        encoder_hidden_states=None,
-        encoder_attention_mask=None,
-        inputs_embeds=None,
-        head_mask=None,
-        cross_attn_head_mask=None,
-        past_key_values=None,
-        use_cache=None,
-        output_attentions=None,
-        output_hidden_states=None,
-        return_dict=None,
+            self,
+            input_ids=None,
+            attention_mask=None,
+            encoder_hidden_states=None,
+            encoder_attention_mask=None,
+            inputs_embeds=None,
+            head_mask=None,
+            cross_attn_head_mask=None,
+            past_key_values=None,
+            time_signal=None,
+            use_cache=None,
+            output_attentions=None,
+            output_hidden_states=None,
+            return_dict=None,
     ):
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
@@ -1073,8 +1084,9 @@ class MustStack(MustPreTrainedModel):
         encoder_decoder_position_bias = None
         aux_losses = []
         hidden_states = self.dropout(inputs_embeds)
-
         for i in range(self.config.num_timesteps):
+            # Apply time embedding
+            hidden_states = hidden_states.add(time_signal[:,i])
             layer_head_mask = head_mask[i]
             cross_attn_layer_head_mask = cross_attn_head_mask[i]
             if output_hidden_states:
@@ -1126,18 +1138,18 @@ class MustStack(MustPreTrainedModel):
 
         if not return_dict:
             return (
-                tuple(
-                    v
-                    for v in [
-                        hidden_states,
-                        present_key_value_states,
-                        all_hidden_states,
-                        all_attentions,
-                        all_cross_attentions,
-                    ]
-                    if v is not None
-                )
-                + (aux_losses,)
+                    tuple(
+                        v
+                        for v in [
+                            hidden_states,
+                            present_key_value_states,
+                            all_hidden_states,
+                            all_attentions,
+                            all_cross_attentions,
+                        ]
+                        if v is not None
+                    )
+                    + (aux_losses,)
             )
         return (
             BaseModelOutputWithPastAndCrossAttentions(
@@ -1401,22 +1413,22 @@ class MustModel(MustPreTrainedModel):
     @add_start_docstrings_to_model_forward(MUST_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=Seq2SeqModelOutput, config_class=_CONFIG_FOR_DOC)
     def forward(
-        self,
-        input_ids=None,
-        attention_mask=None,
-        decoder_input_ids=None,
-        decoder_attention_mask=None,
-        head_mask=None,
-        decoder_head_mask=None,
-        cross_attn_head_mask=None,
-        encoder_outputs=None,
-        past_key_values=None,
-        inputs_embeds=None,
-        decoder_inputs_embeds=None,
-        use_cache=None,
-        output_attentions=None,
-        output_hidden_states=None,
-        return_dict=None,
+            self,
+            input_ids=None,
+            attention_mask=None,
+            decoder_input_ids=None,
+            decoder_attention_mask=None,
+            head_mask=None,
+            decoder_head_mask=None,
+            cross_attn_head_mask=None,
+            encoder_outputs=None,
+            past_key_values=None,
+            inputs_embeds=None,
+            decoder_inputs_embeds=None,
+            use_cache=None,
+            output_attentions=None,
+            output_hidden_states=None,
+            return_dict=None,
     ):
         r"""
         Returns:
@@ -1491,7 +1503,7 @@ class MustModel(MustPreTrainedModel):
             encoder_last_hidden_state=encoder_outputs.last_hidden_state,
             encoder_hidden_states=encoder_outputs.hidden_states,
             encoder_attentions=encoder_outputs.attentions,
-            must_outputs=[1,2,3],
+            must_outputs=[1, 2, 3],
         )
 
 
@@ -1526,12 +1538,12 @@ class MustForConditionalGeneration(MustPreTrainedModel):
         self.decoder = MustStack(decoder_config, self.shared)
         self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
 
+        self.timing_signal = self._gen_timing_signal(config.num_timesteps, config.d_model)
         self.init_weights()
 
         # Model parallel
         self.model_parallel = False
         self.device_map = None
-
 
     def get_input_embeddings(self):
         return self.shared
@@ -1553,26 +1565,46 @@ class MustForConditionalGeneration(MustPreTrainedModel):
     def get_decoder(self):
         return self.decoder
 
+    def _gen_timing_signal(self, min_timescale=1.0, max_timescale=1.0e4):
+        """
+        Generates a [1, length, channels] timing signal consisting of sinusoids
+        Adapted from:
+        https://github.com/tensorflow/tensor2tensor/blob/master/tensor2tensor/layers/common_attention.py
+        """
+        import numpy as np
+        position = np.arange(self.config.num_timesteps)
+        num_timescales = self.config.d_model // 2
+        log_timescale_increment = (math.log(float(max_timescale) / float(min_timescale)) / (float(num_timescales) - 1))
+        inv_timescales = min_timescale * np.exp(np.arange(num_timescales).astype(np.float) * -log_timescale_increment)
+        scaled_time = np.expand_dims(position, 1) * np.expand_dims(inv_timescales, 0)
+
+        signal = np.concatenate([np.sin(scaled_time), np.cos(scaled_time)], axis=1)
+        signal = np.pad(signal, [[0, 0], [0, self.config.d_model % 2]],
+                        'constant', constant_values=[0.0, 0.0])
+        signal = signal.reshape([1, self.config.num_timesteps, self.config.d_model])
+
+        return torch.from_numpy(signal).type(torch.FloatTensor).to(self.device)
+
     @add_start_docstrings_to_model_forward(MUST_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=Seq2SeqLMOutput, config_class=_CONFIG_FOR_DOC)
     def forward(
-        self,
-        input_ids=None,
-        attention_mask=None,
-        decoder_input_ids=None,
-        decoder_attention_mask=None,
-        head_mask=None,
-        decoder_head_mask=None,
-        cross_attn_head_mask=None,
-        encoder_outputs=None,
-        past_key_values=None,
-        inputs_embeds=None,
-        decoder_inputs_embeds=None,
-        labels=None,
-        use_cache=None,
-        output_attentions=None,
-        output_hidden_states=None,
-        return_dict=None,
+            self,
+            input_ids=None,
+            attention_mask=None,
+            decoder_input_ids=None,
+            decoder_attention_mask=None,
+            head_mask=None,
+            decoder_head_mask=None,
+            cross_attn_head_mask=None,
+            encoder_outputs=None,
+            past_key_values=None,
+            inputs_embeds=None,
+            decoder_inputs_embeds=None,
+            labels=None,
+            use_cache=None,
+            output_attentions=None,
+            output_hidden_states=None,
+            return_dict=None,
     ):
         r"""
         labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
@@ -1604,7 +1636,7 @@ class MustForConditionalGeneration(MustPreTrainedModel):
         """
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
+        time_signal = self._gen_timing_signal()
         # FutureWarning: head_mask was separated into two input args - head_mask, decoder_head_mask
         if head_mask is not None and decoder_head_mask is None:
             if self.config.num_layers == self.config.num_decoder_layers:
@@ -1621,6 +1653,7 @@ class MustForConditionalGeneration(MustPreTrainedModel):
                 head_mask=head_mask,
                 output_attentions=output_attentions,
                 output_hidden_states=output_hidden_states,
+                time_signal=time_signal,
                 return_dict=return_dict,
             )
             encoder_aux_losses = encoder_outputs[-1]
@@ -1649,6 +1682,7 @@ class MustForConditionalGeneration(MustPreTrainedModel):
             encoder_attention_mask=attention_mask,
             head_mask=decoder_head_mask,
             cross_attn_head_mask=cross_attn_head_mask,
+            time_signal=time_signal,
             use_cache=use_cache,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
@@ -1669,7 +1703,8 @@ class MustForConditionalGeneration(MustPreTrainedModel):
         if labels is not None:
             loss_fct = CrossEntropyLoss(ignore_index=-100)
             loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
-            aux_loss = self.config.load_balancing_loss_coef * (torch.stack(encoder_aux_losses).sum() + torch.stack(decoder_aux_losses).sum())
+            aux_loss = self.config.load_balancing_loss_coef * (
+                        torch.stack(encoder_aux_losses).sum() + torch.stack(decoder_aux_losses).sum())
             loss = loss + aux_loss
 
         if not return_dict:
@@ -1690,16 +1725,16 @@ class MustForConditionalGeneration(MustPreTrainedModel):
         )
 
     def prepare_inputs_for_generation(
-        self,
-        input_ids,
-        past=None,
-        attention_mask=None,
-        head_mask=None,
-        decoder_head_mask=None,
-        cross_attn_head_mask=None,
-        use_cache=None,
-        encoder_outputs=None,
-        **kwargs
+            self,
+            input_ids,
+            past=None,
+            attention_mask=None,
+            head_mask=None,
+            decoder_head_mask=None,
+            cross_attn_head_mask=None,
+            use_cache=None,
+            encoder_outputs=None,
+            **kwargs
     ):
 
         # cut decoder_input_ids if past is used
@@ -1743,6 +1778,7 @@ class MustForConditionalGeneration(MustPreTrainedModel):
 
             reordered_decoder_past = reordered_decoder_past + (reordered_layer_past_states,)
         return reordered_decoder_past
+
 
 @add_start_docstrings("""Must Model with a `language modeling` head on top. """, MUST_START_DOCSTRING)
 class MustMustForConditionalGeneration(MustPreTrainedModel):
@@ -1804,23 +1840,23 @@ class MustMustForConditionalGeneration(MustPreTrainedModel):
     @add_start_docstrings_to_model_forward(MUST_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=Seq2SeqLMOutput, config_class=_CONFIG_FOR_DOC)
     def forward(
-        self,
-        input_ids=None,
-        attention_mask=None,
-        decoder_input_ids=None,
-        decoder_attention_mask=None,
-        head_mask=None,
-        decoder_head_mask=None,
-        cross_attn_head_mask=None,
-        encoder_outputs=None,
-        past_key_values=None,
-        inputs_embeds=None,
-        decoder_inputs_embeds=None,
-        labels=None,
-        use_cache=None,
-        output_attentions=None,
-        output_hidden_states=None,
-        return_dict=None,
+            self,
+            input_ids=None,
+            attention_mask=None,
+            decoder_input_ids=None,
+            decoder_attention_mask=None,
+            head_mask=None,
+            decoder_head_mask=None,
+            cross_attn_head_mask=None,
+            encoder_outputs=None,
+            past_key_values=None,
+            inputs_embeds=None,
+            decoder_inputs_embeds=None,
+            labels=None,
+            use_cache=None,
+            output_attentions=None,
+            output_hidden_states=None,
+            return_dict=None,
     ):
         r"""
         labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
@@ -1943,16 +1979,16 @@ class MustMustForConditionalGeneration(MustPreTrainedModel):
         )
 
     def prepare_inputs_for_generation(
-        self,
-        input_ids,
-        past=None,
-        attention_mask=None,
-        head_mask=None,
-        decoder_head_mask=None,
-        cross_attn_head_mask=None,
-        use_cache=None,
-        encoder_outputs=None,
-        **kwargs
+            self,
+            input_ids,
+            past=None,
+            attention_mask=None,
+            head_mask=None,
+            decoder_head_mask=None,
+            cross_attn_head_mask=None,
+            use_cache=None,
+            encoder_outputs=None,
+            **kwargs
     ):
 
         # cut decoder_input_ids if past is used
@@ -2062,14 +2098,14 @@ class MustEncoderModel(MustPreTrainedModel):
     @add_start_docstrings_to_model_forward(MUST_ENCODER_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=BaseModelOutput, config_class=_CONFIG_FOR_DOC)
     def forward(
-        self,
-        input_ids=None,
-        attention_mask=None,
-        head_mask=None,
-        inputs_embeds=None,
-        output_attentions=None,
-        output_hidden_states=None,
-        return_dict=None,
+            self,
+            input_ids=None,
+            attention_mask=None,
+            head_mask=None,
+            inputs_embeds=None,
+            output_attentions=None,
+            output_hidden_states=None,
+            return_dict=None,
     ):
         r"""
         Returns:
