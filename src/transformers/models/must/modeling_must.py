@@ -376,7 +376,6 @@ class MustRouterLayer(nn.Module):
     def compute_load_balancing_loss(self, router_probs, expert_mask):
         # print(f"expert_mask: {expert_mask.shape}")
         # print(f"router_probs: {router_probs.shape}")
-        n_total_exps = expert_mask.shape[2]
         if self.config.xla_found:
             import torch_xla.core.xla_model as xm
             expert_mask = xm.all_reduce(xm.REDUCE_SUM, expert_mask.float(), scale=1.0 / self.config.NUM_SHARDS)
@@ -385,10 +384,9 @@ class MustRouterLayer(nn.Module):
             router_probs = xm.all_reduce(xm.REDUCE_SUM, router_probs, scale=1.0 / self.config.NUM_SHARDS)
         density1_proxy = router_probs.mean(dim=1)
         if self.config.xla_found:
-            loss = xm.all_reduce(xm.REDUCE_SUM, (density1 * density1_proxy), scale=1.0 / self.config.NUM_SHARDS) * (
-                        n_total_exps ** 2)
+            loss = xm.all_reduce(xm.REDUCE_SUM, (density1 * density1_proxy), scale=1.0 / self.config.NUM_SHARDS) * (self.config.n_experts ** 2)
         else:
-            loss = (density1 * density1_proxy).sum() * (n_total_exps ** 2)
+            loss = (density1 * density1_proxy).sum() * (self.config.n_experts ** 2)
         return loss
 
     def forward(self, inputs: torch.Tensor):
