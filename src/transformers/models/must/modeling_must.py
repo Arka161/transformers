@@ -287,7 +287,11 @@ class MustExpertsLayer(nn.Module):
         self.epsilon = 1e-6
         self.config = config
         # set seed to unique value to initialize experts
-        torch.manual_seed(self.config.seed * 1000 + self.config.GLOBAL_RANK)
+        seed = self.config.seed * 1000 + self.config.GLOBAL_RANK
+        torch.manual_seed(seed)
+        if config.xla_found:
+            import torch_xla.core.xla_model as xm
+            xm.set_rng_state(seed)
         try:
             import torch_xla.core.xla_model as xm
             self.device = xm.xla_device()
@@ -358,7 +362,11 @@ class MustRouterLayer(nn.Module):
         # Want X-MUST to have different router weights for each timestep and each core
         # Want N-MUSt to have same router weights for each core, so put seed the same
         if "N-must" in config.model_type:
-            torch.manual_seed(self.config.seed + (self.timestep+10))
+            seed = self.config.seed + (self.timestep+10)
+            torch.manual_seed(seed)
+            if config.xla_found:
+                import torch_xla.core.xla_model as xm
+                xm.set_rng_state(seed)
 
         self.linear = nn.Linear(self.config.d_model, int(self.config.n_experts * self.config.NUM_SHARDS),
                                 device=self.device)
