@@ -78,12 +78,12 @@ class MustConfig(PretrainedConfig):
         use_cache (:obj:`bool`, `optional`, defaults to :obj:`True`):
             Whether or not the model should return the last key/values attentions (not used by all models).
     """
-    model_type = "must"
     keys_to_ignore_at_inference = ["past_key_values"]
     attribute_map = {"hidden_size": "d_model", "num_attention_heads": "num_heads", "num_hidden_layers": "num_layers"}
 
     def __init__(
         self,
+        model_type = "must",
         vocab_size=32128,
         d_model=512,
         d_kv=64,
@@ -106,6 +106,7 @@ class MustConfig(PretrainedConfig):
         load_balancing_loss_coef : float = 0.01,
         **kwargs
     ):
+        self.model_type = model_type
         self.vocab_size = vocab_size
         self.d_model = d_model
         self.d_kv = d_kv
