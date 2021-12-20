@@ -435,7 +435,7 @@ class MustLayerFF(nn.Module):
         self.dropout = nn.Dropout(config.dropout_rate)
         if "1-must" in config.model_type:
             self.router_layers = MustRouterLayer(config)
-        elif "N-must" or "X-MUST" in config.model_type:
+        elif "N-must" or "X-must" in config.model_type:
             self.router_layers = nn.ModuleList([MustRouterLayer(config, timestep) for timestep in range(config.num_timesteps)])
 
         self.experts = MustExpertsLayer(config)
