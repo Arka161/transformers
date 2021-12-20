@@ -355,8 +355,16 @@ class MustRouterLayer(nn.Module):
             self.device = xm.xla_device()
         except Exception as e:
             self.device = torch.device('cpu')
+
+        if "X-must" in config.model_type:
+            torch.manual_seed(self.config.seed * self.config.GLOBAL_RANK)
+
         self.linear = nn.Linear(self.config.d_model, int(self.config.n_experts * self.config.NUM_SHARDS),
                                 device=self.device)
+
+        if "X-must" in config.model_type:
+            torch.manual_seed(self.config.seed)
+
         self.softmax = nn.Softmax(dim=-1)
 
     def compute_load_balancing_loss(self, router_probs, expert_mask):
@@ -425,10 +433,14 @@ class MustLayerFF(nn.Module):
         self.config = config
         self.layer_norm = MustLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
-        self.router_layer = MustRouterLayer(config)
+        if "1-must" in config.model_type:
+            self.router_layers = MustRouterLayer(config)
+        elif "N-must" or "X-MUST" in config.model_type:
+            self.router_layers = nn.ModuleList([MustRouterLayer(config) for _ in range(config.num_timesteps)])
+
         self.experts = MustExpertsLayer(config)
 
-    def forward(self, inputs: torch.Tensor):
+    def forward(self, inputs: torch.Tensor, time_step: int = 0):
         # mixed precision
 
         inputs = inputs.to(torch.float32)
@@ -437,10 +449,13 @@ class MustLayerFF(nn.Module):
         inputs = inputs.reshape([core_dim, batch_size * seq_len, d_model])
         inputs = inputs * torch.zeros_like(inputs, device=inputs.device).uniform_(1 - self.epsilon, 1 + self.epsilon)
         inputs = self.layer_norm(inputs)
+        if "1-must" in self.config.model_type:
+            dispatch_tensor, combine_tensor, aux_loss = self.router_layers(inputs)
+        elif "N-must" or "X-must" in self.config.model_type:
+            dispatch_tensor, combine_tensor, aux_loss = self.router_layers[time_step](inputs)
 
-        dispatch_tensor, combine_tensor, aux_loss = self.router_layer(inputs)
         # expert_inputs: (n_cores, n_experts, expert_capacity, d_model)
-        # inputs: (batch, tokens, model_dim)
+        # inputs: (core_dim [1], tokens, model_dim)
 
         expert_inputs = torch.einsum("ctm,ctxp->cxpm", inputs, dispatch_tensor.float())
         # print(f"expert_inputs shape: {expert_inputs.shape}")
@@ -790,6 +805,7 @@ class MustBlock(nn.Module):
             encoder_attention_mask=None,
             encoder_decoder_position_bias=None,
             layer_head_mask=None,
+            time_step=None,
             cross_attn_layer_head_mask=None,
             past_key_value=None,
             use_cache=False,
@@ -865,7 +881,7 @@ class MustBlock(nn.Module):
             attention_outputs = attention_outputs + cross_attention_outputs[2:]
 
         # Apply Feed Forward layer
-        hidden_states, aux_losses = self.layer[-1](hidden_states)
+        hidden_states, aux_losses = self.layer[-1](hidden_states, time_step=time_step)
 
         # clamp inf values to enable fp16 training
         if hidden_states.dtype == torch.float16:
@@ -1100,6 +1116,7 @@ class MustStack(MustPreTrainedModel):
                 encoder_attention_mask=encoder_extended_attention_mask,
                 encoder_decoder_position_bias=encoder_decoder_position_bias,
                 layer_head_mask=layer_head_mask,
+                time_step=i,
                 cross_attn_layer_head_mask=cross_attn_layer_head_mask,
                 past_key_value=past_key_values[i],
                 use_cache=use_cache,

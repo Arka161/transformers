@@ -311,7 +311,7 @@ class SwitchExpertsLayer(nn.Module):
         self.config = config
         self.layer_id = layer_id
         # set seed to unique value to initialize experts
-        torch.manual_seed(self.config.seed * layer_id * 10000)
+        torch.manual_seed(self.config.seed * layer_id * self.config.GLOBAL_RANK * 10000)
         try:
             import torch_xla.core.xla_model as xm
             self.device = xm.xla_device()
