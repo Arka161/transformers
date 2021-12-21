@@ -378,15 +378,16 @@ class MustRouterLayer(nn.Module):
         # print(f"router_probs: {router_probs.shape}")
         if self.config.xla_found:
             import torch_xla.core.xla_model as xm
-            expert_mask = xm.all_reduce(xm.REDUCE_SUM, expert_mask.float(), scale=1.0 / self.config.NUM_SHARDS)
+            import torch_xla.core.functions as xf
+            expert_mask = xf.all_reduce(xm.REDUCE_SUM, expert_mask.float(), scale=1.0 / self.config.NUM_SHARDS)
         density1 = expert_mask.float().mean(dim=1)
         if self.config.xla_found:
-            router_probs = xm.all_reduce(xm.REDUCE_SUM, router_probs, scale=1.0 / self.config.NUM_SHARDS)
+            router_probs = xf.all_reduce(xm.REDUCE_SUM, router_probs, scale=1.0 / self.config.NUM_SHARDS)
         density1_proxy = router_probs.mean(dim=1)
         if self.config.xla_found:
-            loss = xm.all_reduce(xm.REDUCE_SUM, (density1 * density1_proxy), scale=1.0 / self.config.NUM_SHARDS) * (self.config.n_experts ** 2)
+            loss = xf.all_reduce(xm.REDUCE_SUM, (density1 * density1_proxy), scale=1.0 / self.config.NUM_SHARDS) *  (self.config.n_expert * self.config.NUM_SHARDS)
         else:
-            loss = (density1 * density1_proxy).sum() * (self.config.n_experts ** 2)
+            loss = (density1 * density1_proxy).sum() * (self.config.n_expert * self.config.NUM_SHARDS)
         return loss
 
     def forward(self, inputs: torch.Tensor):

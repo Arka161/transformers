@@ -303,8 +303,7 @@ class T5LayerFF(nn.Module):
         forwarded_states = self.layer_norm(hidden_states)
         forwarded_states = self.DenseReluDense(forwarded_states)
         hidden_states = hidden_states + self.dropout(forwarded_states)
-        aux_loss = torch.zeros((1, self.config.n_experts * self.config.NUM_SHARDS)).to(hidden_states.device)
-        return hidden_states, aux_loss
+        return hidden_states, None
 
 class SwitchExpertsLayer(nn.Module):
     def __init__(self, config: SwitchConfig, layer_id):
@@ -385,15 +384,18 @@ class SwitchRouterLayer(nn.Module):
         # Get proportion of tokens routed to each expert, TODO reduce across cores
         if self.config.xla_found:
             import torch_xla.core.xla_model as xm
-            expert_mask = xm.all_reduce(xm.REDUCE_SUM, expert_mask.float(), scale=1.0 / self.config.NUM_SHARDS)
+            import torch_xla.core.functions as xf
+            expert_mask = xf.all_reduce(xm.REDUCE_SUM, expert_mask.float(), scale=1.0 / self.config.NUM_SHARDS)
         density1 = expert_mask.float().mean(dim=1)
         if self.config.xla_found:
-            router_probs = xm.all_reduce(xm.REDUCE_SUM, router_probs, scale=1.0 / self.config.NUM_SHARDS)
+            router_probs = xf.all_reduce(xm.REDUCE_SUM, router_probs, scale=1.0 / self.config.NUM_SHARDS)
         density1_proxy = router_probs.mean(dim=1)
         if self.config.xla_found:
-            loss = xm.all_reduce(xm.REDUCE_SUM, (density1 * density1_proxy), scale=1.0 / self.config.NUM_SHARDS) * (self.config.n_experts ** 2)
+            loss = xm.all_reduce(xm.REDUCE_SUM, (density1 * density1_proxy), scale=1.0 / self.config.NUM_SHARDS) *  (self.config.n_expert * self.config.NUM_SHARDS)
         else:
-            loss = (density1 * density1_proxy).sum() * (self.config.n_experts ** 2)
+            loss = (density1 * density1_proxy).sum() * (self.config.n_expert * self.config.NUM_SHARDS)
+
+        print(f"density1: {density1}, density1_proxy: {density1_proxy}, loss: {loss}")
         return loss
 
     def forward(self, inputs):
@@ -1209,7 +1211,8 @@ class SwitchStack(SwitchPreTrainedModel):
                     use_cache=use_cache,
                     output_attentions=output_attentions,
                 )
-            aux_losses.append(layer_outputs[-1])
+            if layer_outputs[-1] is not None:
+                aux_losses.append(layer_outputs[-1])
 
             # layer_outputs is a tuple with:
             # hidden-states, key-value-states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
