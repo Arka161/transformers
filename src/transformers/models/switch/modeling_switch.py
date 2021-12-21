@@ -391,11 +391,10 @@ class SwitchRouterLayer(nn.Module):
             router_probs = xf.all_reduce(xm.REDUCE_SUM, router_probs, scale=1.0 / self.config.NUM_SHARDS)
         density1_proxy = router_probs.mean(dim=1)
         if self.config.xla_found:
-            loss = xm.all_reduce(xm.REDUCE_SUM, (density1 * density1_proxy), scale=1.0 / self.config.NUM_SHARDS) *  (self.config.n_expert * self.config.NUM_SHARDS)
+            loss = xm.all_reduce(xm.REDUCE_SUM, (density1 * density1_proxy), scale=1.0 / self.config.NUM_SHARDS) *  (self.config.n_experts * self.config.NUM_SHARDS)
         else:
-            loss = (density1 * density1_proxy).sum() * (self.config.n_expert * self.config.NUM_SHARDS)
+            loss = (density1 * density1_proxy).sum() * (self.config.n_experts * self.config.NUM_SHARDS)
 
-        print(f"density1: {density1}, density1_proxy: {density1_proxy}, loss: {loss}")
         return loss
 
     def forward(self, inputs):
