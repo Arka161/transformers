@@ -847,7 +847,7 @@ class SwitchBlock(nn.Module):
         attention_outputs = self_attention_outputs[2:]  # Keep self-attention outputs and relative position weights
 
         # clamp inf values to enable fp16 training
-        if hidden_states.dtype == torch.float16:
+        if hidden_states.dtype == torch.float16 or hidden_states.dtype == torch.bfloat16:
             clamp_value = torch.finfo(hidden_states.dtype).max - 1000
             hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
@@ -874,7 +874,7 @@ class SwitchBlock(nn.Module):
             hidden_states = cross_attention_outputs[0]
 
             # clamp inf values to enable fp16 training
-            if hidden_states.dtype == torch.float16:
+            if hidden_states.dtype == torch.float16 or hidden_states.dtype == torch.bfloat16:
                 clamp_value = torch.finfo(hidden_states.dtype).max - 1000
                 hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
@@ -889,7 +889,7 @@ class SwitchBlock(nn.Module):
         hidden_states, aux_losses = self.layer[-1](hidden_states)
 
         # clamp inf values to enable fp16 training
-        if hidden_states.dtype == torch.float16:
+        if hidden_states.dtype == torch.float16 or hidden_states.dtype == torch.bfloat16:
             clamp_value = torch.finfo(hidden_states.dtype).max - 1000
             hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
