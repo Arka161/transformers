@@ -253,8 +253,8 @@ class SwitchLayerNorm(nn.Module):
 class SwitchDenseReluDense(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.wi = nn.Linear(config.d_model, config.d_ff, bias=False)
-        self.wo = nn.Linear(config.d_ff, config.d_model, bias=False)
+        self.wi = nn.Linear(config.d_model, config.d_ff, bias=False, dtype=torch.bfloat16)
+        self.wo = nn.Linear(config.d_ff, config.d_model, bias=False, dtype=torch.bfloat16)
         self.dropout = nn.Dropout(config.dropout_rate)
 
     def forward(self, hidden_states):
@@ -512,10 +512,10 @@ class SwitchAttention(nn.Module):
         self.inner_dim = self.n_heads * self.key_value_proj_dim
 
         # Mesh TensorFlow initialization to avoid scaling before softmax
-        self.q = nn.Linear(self.d_model, self.inner_dim, bias=False)
-        self.k = nn.Linear(self.d_model, self.inner_dim, bias=False)
-        self.v = nn.Linear(self.d_model, self.inner_dim, bias=False)
-        self.o = nn.Linear(self.inner_dim, self.d_model, bias=False)
+        self.q = nn.Linear(self.d_model, self.inner_dim, bias=False, dtype=torch.bfloat16)
+        self.k = nn.Linear(self.d_model, self.inner_dim, bias=False, dtype=torch.bfloat16)
+        self.v = nn.Linear(self.d_model, self.inner_dim, bias=False, dtype=torch.bfloat16)
+        self.o = nn.Linear(self.inner_dim, self.d_model, bias=False, dtype=torch.bfloat16)
 
         if self.has_relative_attention_bias:
             self.relative_attention_bias = nn.Embedding(self.relative_attention_num_buckets, self.n_heads)
@@ -1663,7 +1663,7 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
         decoder_config.is_encoder_decoder = False
         decoder_config.num_layers = config.num_decoder_layers
         self.decoder = SwitchStack(decoder_config, self.shared)
-        self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
+        self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False, dtype=torch.bfloat16)
 
         self.init_weights()
 
@@ -1955,7 +1955,7 @@ class SwitchSwitchForConditionalGeneration(SwitchPreTrainedModel):
         decoder_config.num_layers = config.num_decoder_layers
         self.decoder = SwitchStack(decoder_config, self.shared)
 
-        self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
+        self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False, dtype=torch.bfloat16)
 
         self.init_weights()
 
