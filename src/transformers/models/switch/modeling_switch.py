@@ -245,8 +245,8 @@ class SwitchLayerNorm(nn.Module):
         hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
 
         # convert into float16 if necessary
-        if self.weight.dtype == torch.float16:
-            hidden_states = hidden_states.to(torch.float16)
+        if self.weight.dtype == torch.float16 or self.weight.dtype == torch.bfloat16:
+            hidden_states = hidden_states.to(torch.bfloat16)
         return self.weight * hidden_states
 
 
@@ -326,16 +326,16 @@ class SwitchExpertsLayer(nn.Module):
 
         if config.feed_forward_proj == "relu":
             self.act = nn.ReLU()
-            self.wi = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
-            self.wo = torch.zeros([self.config.n_experts, self.config.d_ff,  self.config.d_model], dtype=torch.float32, device=self.device)
+            self.wi = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.bfloat16, device=self.device)
+            self.wo = torch.zeros([self.config.n_experts, self.config.d_ff,  self.config.d_model], dtype=torch.bfloat16, device=self.device)
             self.wi.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
             self.wo.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_ff) ** -0.5))
         elif config.feed_forward_proj == "gated-gelu":
             # TODO : replace SwitchDenseGatedGeluDense with an einsum implementation
             self.act = ACT2FN["gelu_new"]
-            self.wi_0 = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
-            self.wi_1 = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32, device=self.device)
-            self.wo = torch.zeros([self.config.n_experts, self.config.d_ff,  self.config.d_model], dtype=torch.float32, device=self.device)
+            self.wi_0 = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.bfloat16, device=self.device)
+            self.wi_1 = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.bfloat16, device=self.device)
+            self.wo = torch.zeros([self.config.n_experts, self.config.d_ff,  self.config.d_model], dtype=torch.bfloat16, device=self.device)
             self.wi_0.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
             self.wi_1.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
             self.wo.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_ff) ** -0.5))
@@ -469,9 +469,11 @@ class SwitchLayerFF(nn.Module):
 
         # dispatch: (n_cores, n_tokens, n_experts, expert_capacity)
         dispatch_tensor, combine_tensor, aux_loss = self.router_layer(inputs)
+        dispatch_tensor = dispatch_tensor.to(torch.bfloat16)
+        combine_tensor = combine_tensor.to(torch.bfloat16)
         # expert_inputs: (n_experts, n_cores, expert_capacity, d_model)
         # inputs: (batch, seq_len, model_dim)
-        expert_inputs = torch.einsum("ctm,ctxp->cxpm", inputs, dispatch_tensor.float())
+        expert_inputs = torch.einsum("ctm,ctxp->cxpm", inputs, dispatch_tensor)
 
         if self.config.xla_found:
             from .dist import all_to_all
@@ -484,7 +486,7 @@ class SwitchLayerFF(nn.Module):
             from .dist import all_to_all
             expert_outputs = all_to_all(expert_outputs, split_dimension=0, concat_dimension=1, split_count=self.config.NUM_SHARDS)
 
-        final_output = torch.einsum('cxpm,ctxp->ctm', expert_outputs, combine_tensor.float())
+        final_output = torch.einsum('cxpm,ctxp->ctm', expert_outputs, combine_tensor)
 
         final_output = final_output.view(batch_size, seq_len, d_model)
 
@@ -573,7 +575,7 @@ class SwitchAttention(nn.Module):
 
         # The other half of the buckets are for logarithmically bigger bins in positions up to max_distance
         relative_postion_if_large = max_exact + (
-            torch.log(relative_position.float() / max_exact)
+            torch.log(relative_position.to(torch.bfloat16) / max_exact)
             / math.log(max_distance / max_exact)
             * (num_buckets - max_exact)
         ).to(torch.long)
@@ -697,7 +699,7 @@ class SwitchAttention(nn.Module):
                 position_bias = position_bias + mask  # (batch_size, n_heads, seq_length, key_length)
 
         scores += position_bias
-        attn_weights = nn.functional.softmax(scores.float(), dim=-1).type_as(
+        attn_weights = nn.functional.softmax(scores.to(torch.bfloat16), dim=-1).type_as(
             scores
         )  # (batch_size, n_heads, seq_length, key_length)
         attn_weights = nn.functional.dropout(
