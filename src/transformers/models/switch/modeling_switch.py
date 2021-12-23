@@ -849,9 +849,8 @@ class SwitchBlock(nn.Module):
         attention_outputs = self_attention_outputs[2:]  # Keep self-attention outputs and relative position weights
 
         # clamp inf values to enable fp16 training
-        if hidden_states.dtype == torch.float16 or hidden_states.dtype == torch.bfloat16:
-            clamp_value = torch.finfo(hidden_states.dtype).max - 1000
-            hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
+        clamp_value = torch.finfo(torch.bfloat16).max - 1000
+        hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
         do_cross_attention = self.is_decoder and encoder_hidden_states is not None
         if do_cross_attention:
@@ -876,9 +875,8 @@ class SwitchBlock(nn.Module):
             hidden_states = cross_attention_outputs[0]
 
             # clamp inf values to enable fp16 training
-            if hidden_states.dtype == torch.float16 or hidden_states.dtype == torch.bfloat16:
-                clamp_value = torch.finfo(hidden_states.dtype).max - 1000
-                hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
+            clamp_value = torch.finfo(torch.bfloat16).max - 1000
+            hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
             # Combine self attn and cross attn key value states
             if present_key_value_state is not None:
@@ -891,9 +889,8 @@ class SwitchBlock(nn.Module):
         hidden_states, aux_losses = self.layer[-1](hidden_states)
 
         # clamp inf values to enable fp16 training
-        if hidden_states.dtype == torch.float16 or hidden_states.dtype == torch.bfloat16:
-            clamp_value = torch.finfo(hidden_states.dtype).max - 1000
-            hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
+        clamp_value = torch.finfo(torch.bfloat16).max - 1000
+        hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
         outputs = (hidden_states,)
 
