@@ -243,8 +243,8 @@ class MustLayerNorm(nn.Module):
         hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
 
         # convert into float16 if necessary
-        if self.weight.dtype == torch.float16:
-            hidden_states = hidden_states.to(torch.float16)
+        if self.weight.dtype == torch.float16 or self.weight.dtype == torch.bfloat16:
+            hidden_states = hidden_states.to(torch.bfloat16)
         return self.weight * hidden_states
 
 
@@ -300,20 +300,20 @@ class MustExpertsLayer(nn.Module):
 
         if config.feed_forward_proj == "relu":
             self.act = nn.ReLU()
-            self.wi = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32,
+            self.wi = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.bfloat16,
                                   device=self.device)
-            self.wo = torch.zeros([self.config.n_experts, self.config.d_ff, self.config.d_model], dtype=torch.float32,
+            self.wo = torch.zeros([self.config.n_experts, self.config.d_ff, self.config.d_model], dtype=torch.bfloat16,
                                   device=self.device)
             self.wi.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
             self.wo.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_ff) ** -0.5))
         elif config.feed_forward_proj == "gated-gelu":
             # TODO : replace MustDenseGatedGeluDense with an einsum implementation
             self.act = ACT2FN["gelu_new"]
-            self.wi_0 = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32,
+            self.wi_0 = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.bfloat16,
                                     device=self.device)
-            self.wi_1 = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.float32,
+            self.wi_1 = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.bfloat16,
                                     device=self.device)
-            self.wo = torch.zeros([self.config.n_experts, self.config.d_ff, self.config.d_model], dtype=torch.float32,
+            self.wo = torch.zeros([self.config.n_experts, self.config.d_ff, self.config.d_model], dtype=torch.bfloat16,
                                   device=self.device)
             self.wi_0.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
             self.wi_1.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
@@ -369,7 +369,7 @@ class MustRouterLayer(nn.Module):
                 xm.set_rng_state(seed)
 
         self.linear = nn.Linear(self.config.d_model, int(self.config.n_experts * self.config.NUM_SHARDS),
-                                device=self.device)
+                                device=self.device, dtype=torch.float32)
 
         self.softmax = nn.Softmax(dim=-1)
 
@@ -395,6 +395,7 @@ class MustRouterLayer(nn.Module):
         core_dim, tokens_per_core, d_model = inputs.shape
         n_total_exps = self.config.n_experts * self.config.NUM_SHARDS
         expert_capacity = max(int(self.config.capacity_factor * tokens_per_core // self.config.n_experts), 1)
+
         ### Perform Routing ###
 
         # router_probs: (n_cores, n_tokens, n_experts)
@@ -463,10 +464,11 @@ class MustLayerFF(nn.Module):
         inputs = inputs * torch.zeros_like(inputs, device=inputs.device).uniform_(1 - self.epsilon, 1 + self.epsilon)
         inputs = self.layer_norm(inputs)
         if "1-must" in self.config.model_type:
-            dispatch_tensor, combine_tensor, aux_loss = self.router_layers(inputs)
+            dispatch_tensor, combine_tensor, aux_loss = self.router_layers(inputs.to(torch.float32))
         elif "N-must" or "X-must" in self.config.model_type:
-            dispatch_tensor, combine_tensor, aux_loss = self.router_layers[time_step](inputs)
-
+            dispatch_tensor, combine_tensor, aux_loss = self.router_layers[time_step](inputs.to(torch.float32))
+        dispatch_tensor = dispatch_tensor.to(torch.bfloat16)
+        combine_tensor = combine_tensor.to(torch.bfloat16)
         # expert_inputs: (n_cores, n_experts, expert_capacity, d_model)
         # inputs: (core_dim [1], tokens, model_dim)
 
@@ -855,9 +857,8 @@ class MustBlock(nn.Module):
         attention_outputs = self_attention_outputs[2:]  # Keep self-attention outputs and relative position weights
 
         # clamp inf values to enable fp16 training
-        if hidden_states.dtype == torch.float16 or hidden_states.dtype == torch.bfloat16:
-            clamp_value = torch.finfo(hidden_states.dtype).max - 1000
-            hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
+        clamp_value = torch.finfo(torch.bfloat16).max - 1000
+        hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
         do_cross_attention = self.is_decoder and encoder_hidden_states is not None
         if do_cross_attention:
@@ -882,9 +883,8 @@ class MustBlock(nn.Module):
             hidden_states = cross_attention_outputs[0]
 
             # clamp inf values to enable fp16 training
-            if hidden_states.dtype == torch.float16 or hidden_states.dtype == torch.bfloat16:
-                clamp_value = torch.finfo(hidden_states.dtype).max - 1000
-                hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
+            clamp_value = torch.finfo(torch.bfloat16).max - 1000
+            hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
             # Combine self attn and cross attn key value states
             if present_key_value_state is not None:
@@ -897,9 +897,8 @@ class MustBlock(nn.Module):
         hidden_states, aux_losses = self.layer[-1](hidden_states, time_step=time_step)
 
         # clamp inf values to enable fp16 training
-        if hidden_states.dtype == torch.float16 or hidden_states.dtype == torch.bfloat16:
-            clamp_value = torch.finfo(hidden_states.dtype).max - 1000
-            hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
+        clamp_value = torch.finfo(torch.bfloat16).max - 1000
+        hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
         outputs = (hidden_states,)
 

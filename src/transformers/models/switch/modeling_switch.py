@@ -377,7 +377,7 @@ class SwitchRouterLayer(nn.Module):
             self.device = xm.xla_device()
         except Exception as e:
             self.device = torch.device('cpu')
-        self.linear = nn.Linear(self.config.d_model, self.config.n_experts, device=self.device)
+        self.linear = nn.Linear(self.config.d_model, self.config.n_experts, device=self.device, dtype=torch.float32)
         self.softmax = nn.Softmax(dim=-1)
 
     def compute_load_balancing_loss(self, router_probs, expert_mask):
@@ -402,7 +402,7 @@ class SwitchRouterLayer(nn.Module):
         core_dim, tokens_per_core, d_model = inputs.shape
         n_total_exps = self.config.n_experts * self.config.NUM_SHARDS
         expert_capacity = max(int(self.config.capacity_factor * tokens_per_core // self.config.n_experts), 1)
-
+        inputs = inputs.to(torch.float32)
         ### Perform Routing ###
         # router_probs: (n_cores, n_tokens, n_experts)
         router_logits = self.linear(inputs)
@@ -460,7 +460,6 @@ class SwitchLayerFF(nn.Module):
     def forward(self, inputs: torch.Tensor):
         # mixed precision
         # print(f"inputs: {inputs.device}")
-        inputs = inputs.to(torch.float32)
         batch_size, seq_len, d_model = inputs.shape
         core_dim = 1
         inputs = inputs.reshape([core_dim, batch_size * seq_len, d_model])
