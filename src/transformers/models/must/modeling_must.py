@@ -528,7 +528,7 @@ class MustAttention(nn.Module):
         self.o = nn.Linear(self.inner_dim, self.d_model, bias=False)
 
         if self.has_relative_attention_bias:
-            self.relative_attention_bias = nn.Embedding(self.relative_attention_num_buckets, self.n_heads)
+            self.relative_attention_bias = nn.Embedding(self.relative_attention_num_buckets, self.n_heads, dtype=torch.bfloat16)
         self.pruned_heads = set()
         self.gradient_checkpointing = False
 
@@ -1375,7 +1375,7 @@ class MustModel(MustPreTrainedModel):
 
     def __init__(self, config: MustConfig):
         super().__init__(config)
-        self.shared = nn.Embedding(config.vocab_size, config.d_model)
+        self.shared = nn.Embedding(config.vocab_size, config.d_model, dtype=torch.bfloat16)
 
         encoder_config = copy.deepcopy(config)
         encoder_config.is_decoder = False
@@ -1552,7 +1552,7 @@ class MustForConditionalGeneration(MustPreTrainedModel):
         self.config = config
         self.model_dim = config.d_model
 
-        self.shared = nn.Embedding(config.vocab_size, config.d_model)
+        self.shared = nn.Embedding(config.vocab_size, config.d_model, dtype=torch.bfloat16)
         self.vocab_dim = config.vocab_size
         encoder_config = copy.deepcopy(config)
         encoder_config.is_decoder = False
@@ -1824,7 +1824,7 @@ class MustMustForConditionalGeneration(MustPreTrainedModel):
         super().__init__(config)
         self.model_dim = config.d_model
 
-        self.shared = nn.Embedding(config.vocab_size, config.d_model)
+        self.shared = nn.Embedding(config.vocab_size, config.d_model, dtype=torch.bfloat16)
 
         encoder_config = copy.deepcopy(config)
         encoder_config.is_decoder = False
@@ -2074,7 +2074,7 @@ class MustEncoderModel(MustPreTrainedModel):
 
     def __init__(self, config: MustConfig):
         super().__init__(config)
-        self.shared = nn.Embedding(config.vocab_size, config.d_model)
+        self.shared = nn.Embedding(config.vocab_size, config.d_model, dtype=torch.bfloat16)
 
         encoder_config = copy.deepcopy(config)
         encoder_config.use_cache = False
