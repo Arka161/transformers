@@ -921,6 +921,10 @@ class SwitchPreTrainedModel(PreTrainedModel):
         }
         return dummy_inputs
 
+    def _set_gradient_checkpointing(self, module, value=False):
+        if isinstance(module, (SwitchAttention, SwitchStack)):
+            module.gradient_checkpointing = value
+
     def _init_weights(self, module):
         """Initialize the weights"""
         factor = self.config.initializer_factor  # Used for testing weights initialization
