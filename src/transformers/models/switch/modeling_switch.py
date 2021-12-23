@@ -518,6 +518,7 @@ class SwitchAttention(nn.Module):
         if self.has_relative_attention_bias:
             self.relative_attention_bias = nn.Embedding(self.relative_attention_num_buckets, self.n_heads, dtype=torch.bfloat16)
         self.pruned_heads = set()
+        self.gradient_checkpointing = False
 
     def prune_heads(self, heads):
         if len(heads) == 0:
@@ -722,6 +723,7 @@ class SwitchLayerSelfAttention(nn.Module):
         self.SelfAttention = SwitchAttention(config, has_relative_attention_bias=has_relative_attention_bias)
         self.layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
+        self.gradient_checkpointing = False
 
     def forward(
         self,
@@ -906,6 +908,7 @@ class SwitchPreTrainedModel(PreTrainedModel):
     load_tf_weights = load_tf_weights_in_switch
     base_model_prefix = "transformer"
     is_parallelizable = True
+    supports_gradient_checkpointing = False
 
     @property
     def dummy_inputs(self):
