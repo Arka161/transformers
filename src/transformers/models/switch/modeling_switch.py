@@ -908,7 +908,7 @@ class SwitchPreTrainedModel(PreTrainedModel):
     load_tf_weights = load_tf_weights_in_switch
     base_model_prefix = "transformer"
     is_parallelizable = True
-    supports_gradient_checkpointing = False
+    supports_gradient_checkpointing = True
 
     @property
     def dummy_inputs(self):
