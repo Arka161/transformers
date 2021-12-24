@@ -304,8 +304,8 @@ class MustExpertsLayer(nn.Module):
                                   device=self.device)
             self.wo = torch.zeros([self.config.n_experts, self.config.d_ff, self.config.d_model], dtype=torch.bfloat16,
                                   device=self.device)
-            self.wi.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
-            self.wo.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_ff) ** -0.5))
+            self.wi.data.normal_(mean=0.0, std=(self.config.initializer_factor / self.config.d_model) ** 0.5)
+            self.wo.data.normal_(mean=0.0, std=(self.config.initializer_factor / self.config.d_ff) ** 0.5)
         elif config.feed_forward_proj == "gated-gelu":
             # TODO : replace MustDenseGatedGeluDense with an einsum implementation
             self.act = ACT2FN["gelu_new"]
@@ -315,9 +315,9 @@ class MustExpertsLayer(nn.Module):
                                     device=self.device)
             self.wo = torch.zeros([self.config.n_experts, self.config.d_ff, self.config.d_model], dtype=torch.bfloat16,
                                   device=self.device)
-            self.wi_0.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
-            self.wi_1.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
-            self.wo.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_ff) ** -0.5))
+            self.wi_0.data.normal_(mean=0.0, std=(self.config.initializer_factor / self.config.d_model) ** 0.5)
+            self.wi_1.data.normal_(mean=0.0, std=(self.config.initializer_factor / self.config.d_model) ** 0.5)
+            self.wo.data.normal_(mean=0.0, std=(self.config.initializer_factor / self.config.d_ff) ** 0.5)
         else:
             raise ValueError(
                 f"{self.config.feed_forward_proj} is not supported. Choose between `relu` and `gated-gelu`"
@@ -937,29 +937,29 @@ class MustPreTrainedModel(PreTrainedModel):
         """Initialize the weights"""
         factor = self.config.initializer_factor  # Used for testing weights initialization
         if isinstance(module, MustLayerNorm):
-            module.weight.data.fill_(factor * 1.0)
+            module.weight.data.fill_(factor)
         elif isinstance(module, (MustModel, MustForConditionalGeneration, MustEncoderModel)):
             # Mesh TensorFlow embeddings initialization
             # See https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/layers.py#L1624
-            module.shared.weight.data.normal_(mean=0.0, std=factor * 1.0)
+            module.shared.weight.data.normal_(mean=0.0, std=factor)
         elif isinstance(module, MustDenseReluDense):
             # Mesh TensorFlow FF initialization
             # See https://github.com/tensorflow/mesh/blob/master/mesh_tensorflow/transformer/transformer_layers.py#L56
             # and https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/layers.py#L89
-            module.wi.weight.data.normal_(mean=0.0, std=factor * ((self.config.d_model) ** -0.5))
+            module.wi.weight.data.normal_(mean=0.0, std=(factor / self.config.d_model) ** 0.5)
             if hasattr(module.wi, "bias") and module.wi.bias is not None:
                 module.wi.bias.data.zero_()
-            module.wo.weight.data.normal_(mean=0.0, std=factor * ((self.config.d_ff) ** -0.5))
+            module.wo.weight.data.normal_(mean=0.0, std=(factor / self.config.d_ff) ** 0.5)
             if hasattr(module.wo, "bias") and module.wo.bias is not None:
                 module.wo.bias.data.zero_()
         elif isinstance(module, MustDenseGatedGeluDense):
-            module.wi_0.weight.data.normal_(mean=0.0, std=factor * ((self.config.d_model) ** -0.5))
+            module.wi_0.weight.data.normal_(mean=0.0, std=(factor / self.config.d_model) ** 0.5)
             if hasattr(module.wi_0, "bias") and module.wi_0.bias is not None:
                 module.wi_0.bias.data.zero_()
-            module.wi_1.weight.data.normal_(mean=0.0, std=factor * ((self.config.d_model) ** -0.5))
+            module.wi_1.weight.data.normal_(mean=0.0, std=(factor / self.config.d_model) ** 0.5)
             if hasattr(module.wi_1, "bias") and module.wi_1.bias is not None:
                 module.wi_1.bias.data.zero_()
-            module.wo.weight.data.normal_(mean=0.0, std=factor * ((self.config.d_ff) ** -0.5))
+            module.wo.weight.data.normal_(mean=0.0, std=(factor / self.config.d_model) ** 0.5)
             if hasattr(module.wo, "bias") and module.wo.bias is not None:
                 module.wo.bias.data.zero_()
         elif isinstance(module, MustAttention):
@@ -968,12 +968,12 @@ class MustPreTrainedModel(PreTrainedModel):
             d_model = self.config.d_model
             key_value_proj_dim = self.config.d_kv
             n_heads = self.config.num_heads
-            module.q.weight.data.normal_(mean=0.0, std=factor * ((d_model * key_value_proj_dim) ** -0.5))
-            module.k.weight.data.normal_(mean=0.0, std=factor * (d_model ** -0.5))
-            module.v.weight.data.normal_(mean=0.0, std=factor * (d_model ** -0.5))
-            module.o.weight.data.normal_(mean=0.0, std=factor * ((n_heads * key_value_proj_dim) ** -0.5))
+            module.q.weight.data.normal_(mean=0.0, std=(factor / (d_model * key_value_proj_dim)) ** 0.5)
+            module.k.weight.data.normal_(mean=0.0, std=(factor / self.config.d_model) ** 0.5)
+            module.v.weight.data.normal_(mean=0.0, std=(factor / self.config.d_model) ** 0.5)
+            module.o.weight.data.normal_(mean=0.0, std=(factor / (n_heads * key_value_proj_dim)) ** 0.5)
             if module.has_relative_attention_bias:
-                module.relative_attention_bias.weight.data.normal_(mean=0.0, std=factor * ((d_model) ** -0.5))
+                module.relative_attention_bias.weight.data.normal_(mean=0.0, std=(factor / d_model) ** 0.5)
 
     def _set_gradient_checkpointing(self, module, value=False):
         if isinstance(module, (MustAttention, MustStack)):
