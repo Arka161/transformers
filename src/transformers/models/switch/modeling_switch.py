@@ -357,7 +357,7 @@ class SwitchRouterLayer(nn.Module):
         except Exception as e:
             self.device = torch.device('cpu')
         self.router_linear = nn.Linear(self.config.d_model, self.config.n_experts, device=self.device, dtype=torch.float32)
-        self.router_linear.data.normal_(mean=0.0, std=((self.config.initializer_factor / self.config.d_model) ** -0.5))
+        self.router_linear.weight.data.normal_(mean=0.0, std=((self.config.initializer_factor / self.config.d_model) ** -0.5))
         self.softmax = nn.Softmax(dim=-1)
 
     def compute_load_balancing_loss(self, router_probs, expert_mask):
