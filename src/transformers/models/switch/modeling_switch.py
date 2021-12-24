@@ -322,6 +322,7 @@ class SwitchExpertsLayer(nn.Module):
             self.device = xm.xla_device()
         except Exception as e:
             self.device = torch.device('cpu')
+        self.act = nn.ReLU()
         self.wi = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.bfloat16,
                               device=self.device)
         self.wo = torch.zeros([self.config.n_experts, self.config.d_ff, self.config.d_model], dtype=torch.bfloat16,
