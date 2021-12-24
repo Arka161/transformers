@@ -327,8 +327,8 @@ class SwitchExpertsLayer(nn.Module):
                               device=self.device)
         self.wo = torch.zeros([self.config.n_experts, self.config.d_ff, self.config.d_model], dtype=torch.bfloat16,
                               device=self.device)
-        self.wi.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
-        self.wo.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_ff) ** -0.5))
+        self.wi.data.normal_(mean=0.0, std=(self.config.initializer_factor / self.config.d_model) ** 0.5)
+        self.wo.data.normal_(mean=0.0, std=(self.config.initializer_factor / self.config.d_ff) ** 0.5)
         self.layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
 
@@ -362,8 +362,8 @@ class SwitchRouterLayer(nn.Module):
             self.device = xm.xla_device()
         except Exception as e:
             self.device = torch.device('cpu')
-        self.router_linear = nn.Linear(self.config.d_model, self.config.n_experts, device=self.device, dtype=torch.float32)
-        self.router_linear.weight.data.normal_(mean=0.0, std=((self.config.initializer_factor / self.config.d_model) ** -0.5))
+        self.router_linear = nn.Linear(self.config.d_model, self.config.n_experts, device=self.device, dtype=torch.bfloat16)
+        self.router_linear.weight.data.normal_(mean=0.0, std=((self.config.initializer_factor / self.config.d_model) ** 0.5))
         self.softmax = nn.Softmax(dim=-1)
 
     def compute_load_balancing_loss(self, router_probs, expert_mask):
@@ -925,20 +925,20 @@ class SwitchPreTrainedModel(PreTrainedModel):
             # Mesh TensorFlow FF initialization
             # See https://github.com/tensorflow/mesh/blob/master/mesh_tensorflow/transformer/transformer_layers.py#L56
             # and https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/layers.py#L89
-            module.wi.weight.data.normal_(mean=0.0, std=((factor / self.config.d_model) ** -0.5))
+            module.wi.weight.data.normal_(mean=0.0, std=((factor / self.config.d_model) ** 0.5))
             if hasattr(module.wi, "bias") and module.wi.bias is not None:
                 module.wi.bias.data.zero_()
-            module.wo.weight.data.normal_(mean=0.0, std=((factor / self.config.d_ff) ** -0.5))
+            module.wo.weight.data.normal_(mean=0.0, std=((factor / self.config.d_ff) ** 0.5))
             if hasattr(module.wo, "bias") and module.wo.bias is not None:
                 module.wo.bias.data.zero_()
         elif isinstance(module, SwitchDenseGatedGeluDense):
-            module.wi_0.weight.data.normal_(mean=0.0, std=((factor / self.config.d_model) ** -0.5))
+            module.wi_0.weight.data.normal_(mean=0.0, std=((factor / self.config.d_model) ** 0.5))
             if hasattr(module.wi_0, "bias") and module.wi_0.bias is not None:
                 module.wi_0.bias.data.zero_()
-            module.wi_1.weight.data.normal_(mean=0.0, std=((factor / self.config.d_model) ** -0.5))
+            module.wi_1.weight.data.normal_(mean=0.0, std=((factor / self.config.d_model) ** 0.5))
             if hasattr(module.wi_1, "bias") and module.wi_1.bias is not None:
                 module.wi_1.bias.data.zero_()
-            module.wo.weight.data.normal_(mean=0.0, std=((factor / self.config.d_ff) ** -0.5))
+            module.wo.weight.data.normal_(mean=0.0, std=((factor / self.config.d_ff) ** 0.5))
             if hasattr(module.wo, "bias") and module.wo.bias is not None:
                 module.wo.bias.data.zero_()
         elif isinstance(module, SwitchAttention):
@@ -947,12 +947,12 @@ class SwitchPreTrainedModel(PreTrainedModel):
             d_model = self.config.d_model
             key_value_proj_dim = self.config.d_kv
             n_heads = self.config.num_heads
-            module.q.weight.data.normal_(mean=0.0, std=(factor / (d_model * key_value_proj_dim) ** -0.5))
-            module.k.weight.data.normal_(mean=0.0, std=(factor / (d_model) ** -0.5))
-            module.v.weight.data.normal_(mean=0.0, std=(factor / (d_model) ** -0.5))
-            module.o.weight.data.normal_(mean=0.0, std=(factor / (n_heads * key_value_proj_dim) ** -0.5))
+            module.q.weight.data.normal_(mean=0.0, std=(factor / (d_model * key_value_proj_dim) ** 0.5))
+            module.k.weight.data.normal_(mean=0.0, std=(factor / (d_model) ** 0.5))
+            module.v.weight.data.normal_(mean=0.0, std=(factor / (d_model) ** 0.5))
+            module.o.weight.data.normal_(mean=0.0, std=(factor / (n_heads * key_value_proj_dim) ** 0.5))
             if module.has_relative_attention_bias:
-                module.relative_attention_bias.weight.data.normal_(mean=0.0, std=(factor / d_model) ** -0.5)
+                module.relative_attention_bias.weight.data.normal_(mean=0.0, std=(factor / d_model) ** 0.5)
 
 
     def _shift_right(self, input_ids):
