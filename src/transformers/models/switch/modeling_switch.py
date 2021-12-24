@@ -322,8 +322,12 @@ class SwitchExpertsLayer(nn.Module):
             self.device = xm.xla_device()
         except Exception as e:
             self.device = torch.device('cpu')
-        self.wi = nn.Linear(config.d_model, config.d_ff, bias=False, dtype=torch.bfloat16)
-        self.wo = nn.Linear(config.d_ff, config.d_model, bias=False, dtype=torch.bfloat16)
+        self.wi = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.bfloat16,
+                              device=self.device)
+        self.wo = torch.zeros([self.config.n_experts, self.config.d_ff, self.config.d_model], dtype=torch.bfloat16,
+                              device=self.device)
+        self.wi.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_model) ** -0.5))
+        self.wo.data.normal_(mean=0.0, std=self.config.initializer_factor * ((self.config.d_ff) ** -0.5))
         self.layer_norm = SwitchLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
 
