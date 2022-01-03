@@ -492,7 +492,7 @@ class MustLayerFF(nn.Module):
             if "1-must" in self.config.model_type:
                 dispatch_tensor, combine_tensor, aux_loss = self.router_layers(inputs.to(torch.float32))
             elif "N-must" or "X-must" in self.config.model_type:
-                dispatch_tensor, combine_tensor, aux_loss = self.router_layers[time_step](inputs.to(torch.float32))
+                dispatch_tensor, combine_tensor, aux_loss = self.router_layers[time_step // 2](inputs.to(torch.float32))
             dispatch_tensor = dispatch_tensor.to(torch.bfloat16)
             combine_tensor = combine_tensor.to(torch.bfloat16)
             # expert_inputs: (n_cores, n_experts, expert_capacity, d_model)
