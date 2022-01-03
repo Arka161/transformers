@@ -486,7 +486,7 @@ class MustLayerFF(nn.Module):
         inputs = inputs * torch.zeros_like(inputs, device=inputs.device).uniform_(1 - self.epsilon, 1 + self.epsilon)
         inputs = self.layer_norm(inputs)
         if time_step % 2 == 0:
-            final_output = self.t5ff_layers[time_step // 2](inputs)
+            final_output = self.t5ff_layers[time_step // 2](inputs)[0]
         else:
             if "1-must" in self.config.model_type:
                 dispatch_tensor, combine_tensor, aux_loss = self.router_layers(inputs.to(torch.float32))
