@@ -486,6 +486,7 @@ class MustLayerFF(nn.Module):
         inputs = inputs * torch.zeros_like(inputs, device=inputs.device).uniform_(1 - self.epsilon, 1 + self.epsilon)
         inputs = self.layer_norm(inputs)
         if time_step % 2 == 0:
+            aux_loss = None
             final_output = self.t5ff_layers[time_step // 2](inputs)[0]
         else:
             if "1-must" in self.config.model_type:
@@ -1149,7 +1150,8 @@ class MustStack(MustPreTrainedModel):
                 use_cache=use_cache,
                 output_attentions=output_attentions,
             )
-            aux_losses.append(layer_outputs[-1])
+            if layer_outputs[-1] is not None:
+                aux_losses.append(layer_outputs[-1])
 
             # layer_outputs is a tuple with:
             # hidden-states, key-value-states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
