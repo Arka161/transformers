@@ -281,6 +281,27 @@ class MustDenseGatedGeluDense(nn.Module):
         return hidden_states
 
 
+class T5LayerFF(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        if config.feed_forward_proj == "relu":
+            self.DenseReluDense = MustDenseReluDense(config)
+        elif config.feed_forward_proj == "gated-gelu":
+            self.DenseReluDense = MustDenseGatedGeluDense(config)
+        else:
+            raise ValueError(
+                f"{self.config.feed_forward_proj} is not supported. Choose between `relu` and `gated-gelu`"
+            )
+        self.layer_norm = MustLayerNorm(config.d_model, eps=config.layer_norm_epsilon)
+        self.dropout = nn.Dropout(config.dropout_rate)
+
+    def forward(self, hidden_states):
+        forwarded_states = self.layer_norm(hidden_states)
+        forwarded_states = self.DenseReluDense(forwarded_states)
+        hidden_states = hidden_states + self.dropout(forwarded_states)
+        return hidden_states, None
+
 class MustExpertsLayer(nn.Module):
     def __init__(self, config: MustConfig):
         super().__init__()
@@ -450,8 +471,9 @@ class MustLayerFF(nn.Module):
         if "1-must" in config.model_type:
             self.router_layers = MustRouterLayer(config, timestep=0)
         elif "N-must" or "X-must" in config.model_type:
-            self.router_layers = nn.ModuleList([MustRouterLayer(config, timestep) for timestep in range(config.num_timesteps)])
+            self.router_layers = nn.ModuleList([MustRouterLayer(config, timestep) for timestep in range(config.num_timesteps//2)])
 
+        self.t5ff_layers = nn.ModuleList([T5LayerFF(config) for _ in range(config.num_timesteps//2)])
         self.experts = MustExpertsLayer(config)
 
     def forward(self, inputs: torch.Tensor, time_step: int = 0):
@@ -463,40 +485,33 @@ class MustLayerFF(nn.Module):
         inputs = inputs.reshape([core_dim, batch_size * seq_len, d_model])
         inputs = inputs * torch.zeros_like(inputs, device=inputs.device).uniform_(1 - self.epsilon, 1 + self.epsilon)
         inputs = self.layer_norm(inputs)
-        if "1-must" in self.config.model_type:
-            dispatch_tensor, combine_tensor, aux_loss = self.router_layers(inputs.to(torch.float32))
-        elif "N-must" or "X-must" in self.config.model_type:
-            dispatch_tensor, combine_tensor, aux_loss = self.router_layers[time_step](inputs.to(torch.float32))
-        dispatch_tensor = dispatch_tensor.to(torch.bfloat16)
-        combine_tensor = combine_tensor.to(torch.bfloat16)
-        # expert_inputs: (n_cores, n_experts, expert_capacity, d_model)
-        # inputs: (core_dim [1], tokens, model_dim)
+        if time_step % 2 == 0:
+            final_output = self.t5ff_layers[time_step // 2](inputs)
+        else:
+            if "1-must" in self.config.model_type:
+                dispatch_tensor, combine_tensor, aux_loss = self.router_layers(inputs.to(torch.float32))
+            elif "N-must" or "X-must" in self.config.model_type:
+                dispatch_tensor, combine_tensor, aux_loss = self.router_layers[time_step](inputs.to(torch.float32))
+            dispatch_tensor = dispatch_tensor.to(torch.bfloat16)
+            combine_tensor = combine_tensor.to(torch.bfloat16)
+            # expert_inputs: (n_cores, n_experts, expert_capacity, d_model)
+            # inputs: (core_dim [1], tokens, model_dim)
+            expert_inputs = torch.einsum("ctm,ctxp->cxpm", inputs, dispatch_tensor.float())
 
-        expert_inputs = torch.einsum("ctm,ctxp->cxpm", inputs, dispatch_tensor.float())
-        # print(f"expert_inputs shape: {expert_inputs.shape}")
-        # print(f"inputs shape: {inputs.shape}")
-        # print(f"dispatch_tensor shape: {dispatch_tensor.shape}")
-        if self.config.xla_found:
-            # print(f"all_to_all, splitting over {self.config.NUM_SHARDS} shards")
-            from .dist import all_to_all
-            expert_inputs = all_to_all(expert_inputs, split_dimension=1, concat_dimension=0,
-                                       split_count=self.config.NUM_SHARDS)
-        # print(f"expert_inputs after all_to_all: {expert_inputs.shape}")
-        ### Perform Expert Forward ###
-        expert_outputs = self.experts(expert_inputs)
-        # print(f"expert_outputs: {expert_outputs.shape}")
-        # experts_out: cores, local_experts, capacity, d_model
-        # combine_tensor: unmapped_cores, tokens, all_experts, capacity
+            if self.config.xla_found:
+                from .dist import all_to_all
+                expert_inputs = all_to_all(expert_inputs, split_dimension=1, concat_dimension=0,
+                                           split_count=self.config.NUM_SHARDS)
+            ### Perform Expert Forward ###
+            expert_outputs = self.experts(expert_inputs)
+            # experts_out: cores, local_experts, capacity, d_model
+            # combine_tensor: unmapped_cores, tokens, all_experts, capacity
 
-        if self.config.xla_found:
-            from .dist import all_to_all
-            expert_outputs = all_to_all(expert_outputs, split_dimension=0, concat_dimension=1,
-                                        split_count=self.config.NUM_SHARDS)
-        final_output = torch.einsum('cxpm,ctxp->ctm', expert_outputs, combine_tensor.float())
-        # print(f"combine_tensor: {combine_tensor.shape}")
-        # print(f"export_outputs shape after: {expert_outputs.shape}")
-        #
-        # print(f"final_output_after_all_to_all: {final_output.shape}")
+            if self.config.xla_found:
+                from .dist import all_to_all
+                expert_outputs = all_to_all(expert_outputs, split_dimension=0, concat_dimension=1,
+                                            split_count=self.config.NUM_SHARDS)
+            final_output = torch.einsum('cxpm,ctxp->ctm', expert_outputs, combine_tensor.float())
 
         final_output = final_output.view(batch_size, seq_len, d_model)
 
