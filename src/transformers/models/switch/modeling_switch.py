@@ -287,9 +287,9 @@ class T5LayerFF(nn.Module):
         super().__init__()
         self.config = config
         if config.feed_forward_proj == "relu":
-            self.DenseReluDense = SwitchDenseReluDense(config)
+            self.net = SwitchDenseReluDense(config)
         elif config.feed_forward_proj == "gated-gelu":
-            self.DenseReluDense = SwitchDenseGatedGeluDense(config)
+            self.net = SwitchDenseGatedGeluDense(config)
         else:
             raise ValueError(
                 f"{self.config.feed_forward_proj} is not supported. Choose between `relu` and `gated-gelu`"
@@ -300,7 +300,7 @@ class T5LayerFF(nn.Module):
 
     def forward(self, hidden_states):
         forwarded_states = self.layer_norm(hidden_states)
-        forwarded_states = self.DenseReluDense(forwarded_states)
+        forwarded_states = self.net(forwarded_states)
         hidden_states = hidden_states + self.dropout(forwarded_states)
         return hidden_states, None
 
@@ -342,12 +342,12 @@ class SwitchExpertsLayer(nn.Module):
             out = self.dropout(out)
             expert_outputs = torch.einsum('lfm,clpf->clpm', self.wo, out)
         elif self.config.feed_forward_proj == "gated-gelu":
-            layer1_out = torch.einsum('xmf,xbcm->xbcf', self.wi_0, expert_inputs)
+            layer1_out = torch.einsum('lmf,clpm->clpf', self.wi_0, expert_inputs)
             layer1_out = self.act(layer1_out)
             # Maintain shape in intermediate output
-            intermid_expert = torch.einsum("xyz,xabz->xabz", self.wi_1, layer1_out)
+            intermid_expert = torch.einsum("lff,clpf->clpf", self.wi_1, layer1_out)
             out = self.dropout(intermid_expert)
-            expert_outputs = torch.einsum('xfm,xbcf->xbcm', self.wo, out)
+            expert_outputs = torch.einsum('lfm,clpf->clpm', self.wo, out)
         else:
             raise Exception("Unknown feed forward projection")
         return expert_outputs

@@ -321,88 +321,19 @@ class T5LayerFF(nn.Module):
     def __init__(self, config, capacity_factor=None, drop_tokens=None, is_scale_prob=None, n_experts=None, expert=None, d_model=None):
         super().__init__()
         if config.feed_forward_proj == "relu":
-            self.DenseReluDense = T5DenseReluDense(config)
+            self.net = T5DenseReluDense(config)
         elif config.feed_forward_proj == "gated-gelu":
-            self.DenseReluDense = T5DenseGatedGeluDense(config)
+            self.net = T5DenseGatedGeluDense(config)
         else:
             raise ValueError(
                 f"{self.config.feed_forward_proj} is not supported. Choose between `relu` and `gated-gelu`"
             )
-        # self.capacity_factor = capacity_factor
-        # self.is_scale_prob = is_scale_prob
-        # self.n_experts = n_experts
-        # self.drop_tokens = drop_tokens
-        # self.experts = clone_module_list(expert, n_experts)
-        # self.switch = nn.Linear(d_model, n_experts)
-        # self.softmax = nn.Softmax(dim=-1)
         self.layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
 
     def forward(self, hidden_states):
-        # Prototype code for Switch based on LabML
-
-        # x = hidden_states
-        # seq_len, batch_size, d_model = hidden_states.shape
-        # x = x.view(-1, d_model)
-        # route_prob = self.softmax(self.switch(x))
-        # route_prob_max, routes = torch.max(route_prob, dim=-1)
-        # indexes_list = [torch.eq(routes, i).nonzero(as_tuple=True)[0] for i in range(self.n_experts)]
-        # final_output = x.new_zeros(x.shape)
-        # capacity = int(self.capacity_factor * len(x) / self.n_experts)
-
-
-        # counts = x.new_tensor([len(indexes_list[i]) for i in range(self.n_experts)])
-
-        # # Initialize an empty list of dropped tokens
-        # dropped = []
-        # # Only drop tokens if `drop_tokens` is `True`.
-        # if self.drop_tokens:
-        #     # Drop tokens in each of the experts
-        #     for i in range(self.n_experts):
-        #         # Ignore if the expert is not over capacity
-        #         if len(indexes_list[i]) <= capacity:
-        #             continue
-        #         # Shuffle indexes before dropping
-        #         indexes_list[i] = indexes_list[i][torch.randperm(len(indexes_list[i]))]
-        #         # Collect the tokens over capacity as dropped tokens
-        #         dropped.append(indexes_list[i][capacity:])
-        #         # Keep only the tokens upto the capacity of the expert
-        #         indexes_list[i] = indexes_list[i][:capacity]
-
-        # # Get outputs of the expert FFNs
-        # expert_output = [self.experts[i](x[indexes_list[i], :]) for i in range(self.n_experts)]
-
-        #         # Assign to final output
-        # for i in range(self.n_experts):
-        #     final_output[indexes_list[i], :] = expert_output[i]
-
-        # # Pass through the dropped tokens
-        # if dropped:
-        #     dropped = torch.cat(dropped)
-        #     final_output[dropped, :] = x[dropped, :]
-
-        # if self.is_scale_prob:
-        #     # Multiply by the expert outputs by the probabilities $y = p_i(x) E_i(x)$
-        #     final_output = final_output * route_prob_max.view(-1, 1)
-        # else:
-        #     # Don't scale the values but multiply by $\frac{p}{\hat{p}} = 1$ so that the gradients flow
-        #     # (this is something we experimented with).
-        #     final_output = final_output * (route_prob_max / route_prob_max.detach()).view(-1, 1)
-
-        # # Change the shape of the final output back to `[seq_len, batch_size, d_model]`
-        # final_output = final_output.view(seq_len, batch_size, d_model)
-
-        # # Return
-        # # * the final output
-        # # * number of tokens routed to each expert
-        # # * sum of probabilities for each expert
-        # # * number of tokens dropped.
-        # # * routing probabilities of the selected experts
-        # # These are used for the load balancing loss and logging
-
-        # return final_output, counts, route_prob.sum(0), len(dropped), route_prob_max
         forwarded_states = self.layer_norm(hidden_states)
-        forwarded_states = self.DenseReluDense(forwarded_states)
+        forwarded_states = self.net(forwarded_states)
         hidden_states = hidden_states + self.dropout(forwarded_states)
         return hidden_states
 
