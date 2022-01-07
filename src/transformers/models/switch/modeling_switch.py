@@ -362,7 +362,7 @@ class SwitchRouterLayer(nn.Module):
             self.device = xm.xla_device()
         except Exception as e:
             self.device = torch.device('cpu')
-        self.router_linear = nn.Linear(self.config.d_model, self.config.n_experts, bias=False, device=self.device, dtype=self.config.dtype)
+        self.router_linear = nn.Linear(self.config.d_model, self.config.n_experts, bias=False, device=self.device)
         # avg of fan-in and fan-out
         scale = (self.config.d_model + self.config.n_experts) / 2
         std = (self.config.initializer_factor / scale) ** 0.5
@@ -410,7 +410,6 @@ class SwitchRouterLayer(nn.Module):
         expert_mask = expert_mask.long()
 
         # print(f"expert_mask: {expert_mask.device}")
-        breakpoint()
         aux_loss = self.compute_load_balancing_loss(router_probs, expert_mask)
         position_in_expert = (expert_mask.float().cumsum(dim=1) * expert_mask).long()
 
