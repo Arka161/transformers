@@ -388,10 +388,12 @@ class MustRouterLayer(nn.Module):
             if config.xla_found:
                 import torch_xla.core.xla_model as xm
                 xm.set_rng_state(seed)
-
-        self.linear = nn.Linear(self.config.d_model, int(self.config.n_experts * self.config.NUM_SHARDS),
-                                device=self.device, dtype=torch.float32)
-
+        fan_out = int(self.config.n_experts * self.config.NUM_SHARDS)
+        self.linear = nn.Linear(self.config.d_model, fan_out, bias=False, device=self.device, dtype=torch.float32)
+        # avg of fan-in and fan-out
+        scale = (self.config.d_model + fan_out) / 2
+        std = (self.config.initializer_factor / scale) ** 0.5
+        nn.init.trunc_normal_(self.router_linear.weight, mean=0.0, std=std, a=-2*std, b=2*std)
         self.softmax = nn.Softmax(dim=-1)
 
     def compute_load_balancing_loss(self, router_probs, expert_mask):

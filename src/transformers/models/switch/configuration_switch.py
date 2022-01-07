@@ -17,7 +17,7 @@ from collections import OrderedDict
 from typing import Any, Dict, Iterable, Mapping, Optional
 
 from transformers import PreTrainedTokenizer, TensorType
-
+import torch
 from ... import is_torch_available
 from ...configuration_utils import PretrainedConfig
 from ...onnx import OnnxConfigWithPast
@@ -104,6 +104,7 @@ class SwitchConfig(PretrainedConfig):
         drop_token : bool = False,
         n_experts : int = 2,
         load_balancing_loss_coef : float = 0.01,
+        dtype : torch.dtype = torch.float32,
         **kwargs
     ):
         self.vocab_size = vocab_size
@@ -125,6 +126,7 @@ class SwitchConfig(PretrainedConfig):
         self.n_experts=n_experts
         self.load_balancing_loss_coef = load_balancing_loss_coef
         self.drop_token = drop_token
+        self.dtype = dtype
         super().__init__(
             pad_token_id=pad_token_id,
             eos_token_id=eos_token_id,

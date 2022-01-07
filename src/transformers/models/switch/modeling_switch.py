@@ -252,8 +252,8 @@ class SwitchLayerNorm(nn.Module):
 class SwitchDenseReluDense(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.wi = nn.Linear(config.d_model, config.d_ff, bias=False, dtype=torch.bfloat16)
-        self.wo = nn.Linear(config.d_ff, config.d_model, bias=False, dtype=torch.bfloat16)
+        self.wi = nn.Linear(config.d_model, config.d_ff, bias=False, dtype=config.dtype)
+        self.wo = nn.Linear(config.d_ff, config.d_model, bias=False, dtype=config.dtype)
         self.dropout = nn.Dropout(config.dropout_rate)
 
     def forward(self, hidden_states):
@@ -323,9 +323,9 @@ class SwitchExpertsLayer(nn.Module):
         except Exception as e:
             self.device = torch.device('cpu')
         self.act = nn.ReLU()
-        self.wi = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=torch.bfloat16,
+        self.wi = torch.zeros([self.config.n_experts, self.config.d_model, self.config.d_ff], dtype=config.dtype,
                               device=self.device)
-        self.wo = torch.zeros([self.config.n_experts, self.config.d_ff, self.config.d_model], dtype=torch.bfloat16,
+        self.wo = torch.zeros([self.config.n_experts, self.config.d_ff, self.config.d_model], dtype=config.dtype,
                               device=self.device)
         self.wi.data.normal_(mean=0.0, std=(self.config.initializer_factor / self.config.d_model) ** 0.5)
         self.wo.data.normal_(mean=0.0, std=(self.config.initializer_factor / self.config.d_ff) ** 0.5)
@@ -362,12 +362,16 @@ class SwitchRouterLayer(nn.Module):
             self.device = xm.xla_device()
         except Exception as e:
             self.device = torch.device('cpu')
-        self.router_linear = nn.Linear(self.config.d_model, self.config.n_experts, device=self.device, dtype=torch.bfloat16)
-        self.router_linear.weight.data.normal_(mean=0.0, std=((self.config.initializer_factor / self.config.d_model) ** 0.5))
+        self.router_linear = nn.Linear(self.config.d_model, self.config.n_experts, bias=False, device=self.device, dtype=self.config.dtype)
+        # avg of fan-in and fan-out
+        scale = (self.config.d_model + self.config.n_experts) / 2
+        std = (self.config.initializer_factor / scale) ** 0.5
+        nn.init.trunc_normal_(self.router_linear.weight, mean=0.0, std=std, a=-2*std, b=2*std)
         self.softmax = nn.Softmax(dim=-1)
 
     def compute_load_balancing_loss(self, router_probs, expert_mask):
-        # Get proportion of tokens routed to each expert, TODO reduce across cores
+        breakpoint()
+
         if self.config.xla_found:
             import torch_xla.core.xla_model as xm
             import torch_xla.core.functions as xf
@@ -377,7 +381,7 @@ class SwitchRouterLayer(nn.Module):
             router_probs = xf.all_reduce(xm.REDUCE_SUM, router_probs, scale=1.0 / self.config.NUM_SHARDS)
         density1_proxy = router_probs.mean(dim=1)
         if self.config.xla_found:
-            loss = xm.all_reduce(xm.REDUCE_SUM, (density1 * density1_proxy), scale=1.0 / self.config.NUM_SHARDS) *  (self.config.n_experts * self.config.NUM_SHARDS)
+            loss = xf.all_reduce(xm.REDUCE_SUM, (density1 * density1_proxy), scale=1.0 / self.config.NUM_SHARDS) *  (self.config.n_experts * self.config.NUM_SHARDS)
         else:
             loss = (density1 * density1_proxy).sum() * (self.config.n_experts * self.config.NUM_SHARDS)
 
@@ -408,6 +412,7 @@ class SwitchRouterLayer(nn.Module):
         expert_mask = expert_mask.long()
 
         # print(f"expert_mask: {expert_mask.device}")
+        breakpoint()
         aux_loss = self.compute_load_balancing_loss(router_probs, expert_mask)
         position_in_expert = (expert_mask.float().cumsum(dim=1) * expert_mask).long()
 
@@ -454,8 +459,8 @@ class SwitchLayerFF(nn.Module):
 
         # dispatch: (n_cores, n_tokens, n_experts, expert_capacity)
         dispatch_tensor, combine_tensor, aux_loss = self.router_layer(inputs)
-        dispatch_tensor = dispatch_tensor.to(torch.bfloat16)
-        combine_tensor = combine_tensor.to(torch.bfloat16)
+        dispatch_tensor = dispatch_tensor.to(self.config.dtype)
+        combine_tensor = combine_tensor.to(self.config.dtype)
         # expert_inputs: (n_experts, n_cores, expert_capacity, d_model)
         # inputs: (batch, seq_len, model_dim)
         expert_inputs = torch.einsum("ctm,ctxp->cxpm", inputs, dispatch_tensor)
@@ -487,6 +492,7 @@ class SwitchAttention(nn.Module):
     def __init__(self, config: SwitchConfig, has_relative_attention_bias=False):
         super().__init__()
         self.is_decoder = config.is_decoder
+        self.config = config
         self.has_relative_attention_bias = has_relative_attention_bias
 
         self.relative_attention_num_buckets = config.relative_attention_num_buckets
@@ -497,13 +503,13 @@ class SwitchAttention(nn.Module):
         self.inner_dim = self.n_heads * self.key_value_proj_dim
 
         # Mesh TensorFlow initialization to avoid scaling before softmax
-        self.q = nn.Linear(self.d_model, self.inner_dim, bias=False, dtype=torch.bfloat16)
-        self.k = nn.Linear(self.d_model, self.inner_dim, bias=False, dtype=torch.bfloat16)
-        self.v = nn.Linear(self.d_model, self.inner_dim, bias=False, dtype=torch.bfloat16)
-        self.o = nn.Linear(self.inner_dim, self.d_model, bias=False, dtype=torch.bfloat16)
+        self.q = nn.Linear(self.d_model, self.inner_dim, bias=False, dtype=config.dtype)
+        self.k = nn.Linear(self.d_model, self.inner_dim, bias=False, dtype=config.dtype)
+        self.v = nn.Linear(self.d_model, self.inner_dim, bias=False, dtype=config.dtype)
+        self.o = nn.Linear(self.inner_dim, self.d_model, bias=False, dtype=config.dtype)
 
         if self.has_relative_attention_bias:
-            self.relative_attention_bias = nn.Embedding(self.relative_attention_num_buckets, self.n_heads, dtype=torch.bfloat16)
+            self.relative_attention_bias = nn.Embedding(self.relative_attention_num_buckets, self.n_heads, dtype=config.dtype)
         self.pruned_heads = set()
         self.gradient_checkpointing = False
 
@@ -560,7 +566,7 @@ class SwitchAttention(nn.Module):
 
         # The other half of the buckets are for logarithmically bigger bins in positions up to max_distance
         relative_postion_if_large = max_exact + (
-            torch.log(relative_position.to(torch.bfloat16) / max_exact)
+            torch.log(relative_position.float() / max_exact)
             / math.log(max_distance / max_exact)
             * (num_buckets - max_exact)
         ).to(torch.long)
@@ -682,7 +688,7 @@ class SwitchAttention(nn.Module):
                 position_bias = position_bias + mask  # (batch_size, n_heads, seq_length, key_length)
 
         scores += position_bias
-        attn_weights = nn.functional.softmax(scores.to(torch.bfloat16), dim=-1).type_as(
+        attn_weights = nn.functional.softmax(scores.to(self.config.dtype), dim=-1).type_as(
             scores
         )  # (batch_size, n_heads, seq_length, key_length)
         attn_weights = nn.functional.dropout(
@@ -777,6 +783,7 @@ class SwitchBlock(nn.Module):
     def __init__(self, config, layer_id, has_relative_attention_bias=False):
         super().__init__()
         self.layer_id = layer_id
+        self.config = config
         self.is_decoder = config.is_decoder
         self.layer = nn.ModuleList()
         self.layer.append(SwitchLayerSelfAttention(config, has_relative_attention_bias=has_relative_attention_bias))
@@ -833,7 +840,7 @@ class SwitchBlock(nn.Module):
         attention_outputs = self_attention_outputs[2:]  # Keep self-attention outputs and relative position weights
 
         # clamp inf values to enable fp16 training
-        clamp_value = torch.finfo(torch.bfloat16).max - 1000
+        clamp_value = torch.finfo(self.config.dtype).max - 1000
         hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
         do_cross_attention = self.is_decoder and encoder_hidden_states is not None
@@ -859,7 +866,7 @@ class SwitchBlock(nn.Module):
             hidden_states = cross_attention_outputs[0]
 
             # clamp inf values to enable fp16 training
-            clamp_value = torch.finfo(torch.bfloat16).max - 1000
+            clamp_value = torch.finfo(self.config.dtype).max - 1000
             hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
             # Combine self attn and cross attn key value states
@@ -873,7 +880,7 @@ class SwitchBlock(nn.Module):
         hidden_states, aux_losses = self.layer[-1](hidden_states)
 
         # clamp inf values to enable fp16 training
-        clamp_value = torch.finfo(torch.bfloat16).max - 1000
+        clamp_value = torch.finfo(self.config.dtype).max - 1000
         hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
         outputs = (hidden_states,)
@@ -1353,7 +1360,7 @@ class SwitchModel(SwitchPreTrainedModel):
 
     def __init__(self, config: SwitchConfig):
         super().__init__(config)
-        self.shared = nn.Embedding(config.vocab_size, config.d_model, dtype=torch.bfloat16)
+        self.shared = nn.Embedding(config.vocab_size, config.d_model, dtype=config.dtype)
 
         encoder_config = copy.deepcopy(config)
         encoder_config.is_decoder = False
@@ -1504,9 +1511,10 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.config = config
+        self.config.dtype = eval(self.config.dtype)
         self.model_dim = config.d_model
 
-        self.shared = nn.Embedding(config.vocab_size, config.d_model, dtype=torch.bfloat16)
+        self.shared = nn.Embedding(config.vocab_size, config.d_model, dtype=config.dtype)
         self.vocab_dim = config.vocab_size
         encoder_config = copy.deepcopy(config)
         encoder_config.is_decoder = False
@@ -1519,7 +1527,7 @@ class SwitchForConditionalGeneration(SwitchPreTrainedModel):
         decoder_config.is_encoder_decoder = False
         decoder_config.num_layers = config.num_decoder_layers
         self.decoder = SwitchStack(decoder_config, self.shared)
-        self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False, dtype=torch.bfloat16)
+        self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False, dtype=config.dtype)
 
         self.init_weights()
 
@@ -1749,7 +1757,7 @@ class SwitchSwitchForConditionalGeneration(SwitchPreTrainedModel):
         super().__init__(config)
         self.model_dim = config.d_model
 
-        self.shared = nn.Embedding(config.vocab_size, config.d_model, dtype=torch.bfloat16)
+        self.shared = nn.Embedding(config.vocab_size, config.d_model, dtype=config.dtype)
 
         encoder_config = copy.deepcopy(config)
         encoder_config.is_decoder = False
@@ -1763,7 +1771,7 @@ class SwitchSwitchForConditionalGeneration(SwitchPreTrainedModel):
         decoder_config.num_layers = config.num_decoder_layers
         self.decoder = SwitchStack(decoder_config, self.shared)
 
-        self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False, dtype=torch.bfloat16)
+        self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False, dtype=config.dtype)
 
         self.init_weights()
 
@@ -1984,7 +1992,7 @@ class SwitchEncoderModel(SwitchPreTrainedModel):
 
     def __init__(self, config: SwitchConfig):
         super().__init__(config)
-        self.shared = nn.Embedding(config.vocab_size, config.d_model, dtype=torch.bfloat16)
+        self.shared = nn.Embedding(config.vocab_size, config.d_model, dtype=config.dtype)
 
         encoder_config = copy.deepcopy(config)
         encoder_config.use_cache = False
