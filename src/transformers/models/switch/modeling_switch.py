@@ -370,8 +370,6 @@ class SwitchRouterLayer(nn.Module):
         self.softmax = nn.Softmax(dim=-1)
 
     def compute_load_balancing_loss(self, router_probs, expert_mask):
-        breakpoint()
-
         if self.config.xla_found:
             import torch_xla.core.xla_model as xm
             import torch_xla.core.functions as xf
