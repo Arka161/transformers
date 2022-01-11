@@ -371,7 +371,7 @@ class MustExpertsLayer(nn.Module):
 class MustRouterLayer(nn.Module):
     def __init__(self, config: MustConfig, timestep):
         super().__init__()
-        self.epsilon = 1e-6
+        self.epsilon = 1e-2
         self.config = config
 
         self.timestep = timestep
@@ -421,8 +421,11 @@ class MustRouterLayer(nn.Module):
 
         ### Perform Routing ###
 
+        # Apply input jitter
+        gate_inputs = inputs * torch.ones_like(inputs).uniform_(1.0-self.epsilon, 1.0+self.epsilon)
+
         # router_probs: (n_cores, n_tokens, n_experts)
-        router_logits = self.linear(inputs)
+        router_logits = self.linear(gate_inputs)
         # print(f"router_logits shape: {router_logits.shape}")
         router_probs = self.softmax(router_logits)
 

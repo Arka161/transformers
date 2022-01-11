@@ -355,7 +355,7 @@ class SwitchExpertsLayer(nn.Module):
 class SwitchRouterLayer(nn.Module):
     def __init__(self, config: SwitchConfig):
         super().__init__()
-        self.epsilon = 1e-6
+        self.epsilon = 1e-2
         self.config = config
         try:
             import torch_xla.core.xla_model as xm
@@ -393,16 +393,17 @@ class SwitchRouterLayer(nn.Module):
         expert_capacity = max(int(self.config.capacity_factor * tokens_per_core // self.config.n_experts), 1)
         inputs = inputs.to(torch.float32)
         ### Perform Routing ###
+
+        # Apply input jitter
+        gate_inputs = inputs * torch.ones_like(inputs).uniform_(1.0-self.epsilon, 1.0+self.epsilon)
+
         # router_probs: (n_cores, n_tokens, n_experts)
-        router_logits = self.router_linear(inputs)
-        # print(f"router_logits: {router_logits.device}")
+        router_logits = self.router_linear(gate_inputs)
         router_probs = self.softmax(router_logits)
-        # print(f"router_probs: {router_probs.device}")
 
         ### Setup Expert Inputs and Dispatch tensor ###
         # expert_gate, expert_index: (n_cores n_tokens)
         expert_gate, expert_index = router_probs.max(dim=-1)
-        # print(f"expert_index: {expert_index.device}")
 
         # expert mask: (n_cores, n_tokens, n_experts)
         # One-hot encoding of EXPERT_MASK
@@ -410,7 +411,6 @@ class SwitchRouterLayer(nn.Module):
         expert_mask.scatter_(2, expert_index.unsqueeze(2), 1.0)
         expert_mask = expert_mask.long()
 
-        # print(f"expert_mask: {expert_mask.device}")
         aux_loss = self.compute_load_balancing_loss(router_probs, expert_mask)
         position_in_expert = (expert_mask.float().cumsum(dim=1) * expert_mask).long()
 
