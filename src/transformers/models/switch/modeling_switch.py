@@ -362,9 +362,10 @@ class SwitchRouterLayer(nn.Module):
             self.device = xm.xla_device()
         except Exception as e:
             self.device = torch.device('cpu')
-        self.router_linear = nn.Linear(self.config.d_model, self.config.n_experts, bias=False, device=self.device)
+        fan_out = int(self.config.n_experts * self.config.NUM_SHARDS)
+        self.router_linear = nn.Linear(self.config.d_model, fan_out, bias=False, device=self.device)
         # avg of fan-in and fan-out
-        scale = (self.config.d_model + self.config.n_experts) / 2
+        scale = (self.config.d_model + fan_out) / 2
         std = (self.config.initializer_factor / scale) ** 0.5
         nn.init.trunc_normal_(self.router_linear.weight, mean=0.0, std=std, a=-2*std, b=2*std)
         self.softmax = nn.Softmax(dim=-1)
